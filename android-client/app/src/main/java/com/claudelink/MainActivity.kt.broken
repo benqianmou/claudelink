@@ -1,0 +1,408 @@
+package com.claudelink
+
+import android.os.Bundle
+import android.view.KeyEvent
+import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+
+class MainActivity : AppCompatActivity() {
+
+    // Terminal views
+    private lateinit var terminalView: TerminalView
+    private lateinit var serverInput: EditText
+    private lateinit var inputField: EditText
+    private lateinit var connectButton: Button
+    private lateinit var sendButton: Button
+    private lateinit var scrollView: ScrollView
+
+    // Virtual keyboard buttons
+    private lateinit var btnCtrlC: Button
+    private lateinit var btnTab: Button
+    private lateinit var btnEsc: Button
+    private lateinit var btnUp: Button
+    private lateinit var btnDown: Button
+    private lateinit var btnClear: Button
+
+    // Tab navigation buttons
+    private lateinit var btnTerminalTab: Button
+    private lateinit var btnTasksTab: Button
+    private lateinit var btnHistoryTab: Button
+
+    // View containers
+    private lateinit var terminalContainer: LinearLayout
+    private lateinit var tasksContainer: LinearLayout
+    private lateinit var historyContainer: LinearLayout
+
+    // Status bar
+    private lateinit var statusBar: LinearLayout
+    private lateinit var statusText: TextView
+
+    // Tasks view
+    private lateinit var tasksRecyclerView: RecyclerView
+    private lateinit var taskAdapter: TaskAdapter
+    private val taskList = mutableListOf<Task>()
+
+    // History view
+    private lateinit var historyRecyclerView: RecyclerView
+    private lateinit var historyAdapter: HistoryAdapter
+    private val historyList = mutableListOf<HistoryItem>()
+
+    // Connection state
+    private var wsClient: WebSocketClient? = null
+    private var isConnected = false
+
+    // Current tab
+    private enum class Tab {
+        TERMINAL, TASKS, HISTORY
+    }
+    private var currentTab = Tab.TERMINAL
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        initializeViews()
+        setupListeners()
+        initializeTaskBoard()
+        initializeHistory()
+
+        // Show terminal tab by default
+        switchToTab(Tab.TERMINAL)
+    }
+
+    private fun initializeViews() {
+        // Terminal views
+        terminalView = findViewById(R.id.terminalView)
+        serverInput = findViewById(R.id.serverInput)
+        inputField = findViewById(R.id.inputField)
+        connectButton = findViewById(R.id.connectButton)
+        sendButton = findViewById(R.id.sendButton)
+        scrollView = findViewById(R.id.scrollView)
+
+        // Virtual keyboard buttons
+        btnCtrlC = findViewById(R.id.btnCtrlC)
+        btnTab = findViewById(R.id.btnTab)
+        btnEsc = findViewById(R.id.btnEsc)
+        btnUp = findViewById(R.id.btnUp)
+        btnDown = findViewById(R.id.btnDown)
+        btnClear = findViewById(R.id.btnClear)
+
+        // Tab navigation buttons
+        btnTerminalTab = findViewById(R.id.btnTerminalTab)
+        btnTasksTab = findViewById(R.id.btnTasksTab)
+        btnHistoryTab = findViewById(R.id.btnHistoryTab)
+
+        // View containers
+        terminalContainer = findViewById(R.id.terminalContainer)
+        tasksContainer = findViewById(R.id.tasksContainer)
+        historyContainer = findViewById(R.id.historyContainer)
+
+        // Status bar
+        statusBar = findViewById(R.id.statusBar)
+        statusText = findViewById(R.id.statusText)
+
+        // Tasks RecyclerView
+        tasksRecyclerView = findViewById(R.id.tasksRecyclerView)
+        tasksRecyclerView.layoutManager = LinearLayoutManager(this)
+
+        // History RecyclerView
+        historyRecyclerView = findViewById(R.id.historyRecyclerView)
+        historyRecyclerView.layoutManager = LinearLayoutManager(this)
+    }
+
+    private fun setupListeners() {
+        // Tab button listeners
+        btnTerminalTab.setOnClickListener {
+            switchToTab(Tab.TERMINAL)
+        }
+
+        btnTasksTab.setOnClickListener {
+            switchToTab(Tab.TASKS)
+        }
+
+        btnHistoryTab.setOnClickListener {
+            switchToTab(Tab.HISTORY)
+        }
+
+        // Connect button
+        connectButton.setOnClickListener {
+            if (!isConnected) {
+                val serverUrl = serverInput.text.toString().trim()
+                if (serverUrl.isEmpty()) {
+                    Toast.makeText(this, "Please enter server address", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                connectToServer(serverUrl)
+            } else {
+                disconnect()
+            }
+        }
+
+        // Send button
+        sendButton.setOnClickListener {
+            if (isConnected) {
+                val input = inputField.text.toString()
+                sendCommand(input)
+                inputField.text.clear()
+            }
+        }
+
+        // Input field enter key
+        inputField.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEND && isConnected) {
+                val input = inputField.text.toString()
+                sendCommand(input)
+                inputField.text.clear()
+                true
+            } else false
+        }
+
+        // Virtual keyboard listeners
+        btnCtrlC.setOnClickListener {
+            wsClient?.sendInput("") // Ctrl+C
+        }
+
+        btnTab.setOnClickListener {
+            wsClient?.sendInput("\t")
+        }
+
+        btnEsc.setOnClickListener {
+            wsClient?.sendInput("") // ESC
+        }
+
+        btnUp.setOnClickListener {
+            wsClient?.sendInput("[A") // Up arrow
+        }
+
+        btnDown.setOnClickListener {
+            wsClient?.sendInput("[B") // Down arrow
+        }
+
+        btnClear.setOnClickListener {
+            terminalView.clear()
+        }
+    }
+
+    private fun initializeTaskBoard() {
+        taskAdapter = TaskAdapter(taskList) { task ->
+            onTaskClicked(task)
+        }
+        tasksRecyclerView.adapter = taskAdapter
+
+        // Add some sample tasks
+        addTask(Task("Setup Environment", "Configure development environment", TaskStatus.IN_PROGRESS))
+        addTask(Task("Connect to Server", "Establish WebSocket connection", TaskStatus.PENDING))
+        addTask(Task("Run Tests", "Execute test suite", TaskStatus.PENDING))
+    }
+
+    private fun initializeHistory() {
+        historyAdapter = HistoryAdapter(historyList)
+        historyRecyclerView.adapter = historyAdapter
+    }
+
+    private fun switchToTab(tab: Tab) {
+        currentTab = tab
+
+        // Update tab button states
+        btnTerminalTab.isSelected = (tab == Tab.TERMINAL)
+        btnTasksTab.isSelected = (tab == Tab.TASKS)
+        btnHistoryTab.isSelected = (tab == Tab.HISTORY)
+
+        // Show/hide containers
+        terminalContainer.visibility = if (tab == Tab.TERMINAL) View.VISIBLE else View.GONE
+        tasksContainer.visibility = if (tab == Tab.TASKS) View.VISIBLE else View.GONE
+        historyContainer.visibility = if (tab == Tab.HISTORY) View.VISIBLE else View.GONE
+
+        // Update UI based on tab
+        when (tab) {
+            Tab.TERMINAL -> {
+                // Terminal-specific UI updates
+            }
+            Tab.TASKS -> {
+                // Refresh task list
+                taskAdapter.notifyDataSetChanged()
+            }
+            Tab.HISTORY -> {
+                // Refresh history list
+                historyAdapter.notifyDataSetChanged()
+            }
+        }
+    }
+
+    private fun updateStatusBar() {
+        if (isConnected) {
+            statusBar.visibility = View.VISIBLE
+            statusText.text = "Connected to ${serverInput.text}"
+            statusBar.setBackgroundColor(getColor(android.R.color.holo_green_dark))
+        } else {
+            statusBar.visibility = View.GONE
+        }
+    }
+
+    private fun sendCommand(command: String) {
+        if (isConnected && command.isNotEmpty()) {
+            wsClient?.sendInput(command + "\r")
+
+            // Add to history
+            addHistoryItem(HistoryItem(
+                command = command,
+                timestamp = System.currentTimeMillis(),
+                success = true
+            ))
+        }
+    }
+
+    private fun connectToServer(url: String) {
+        val wsUrl = if (url.startsWith("ws://") || url.startsWith("wss://")) url else "ws://$url"
+
+        wsClient = WebSocketClient(wsUrl, object : WebSocketClient.Listener {
+            override fun onConnected() {
+                runOnUiThread {
+                    isConnected = true
+                    connectButton.text = "Disconnect"
+                    terminalView.appendData("[Connected to $wsUrl]\n")
+                    Toast.makeText(this@MainActivity, "Connected", Toast.LENGTH_SHORT).show()
+                    updateStatusBar()
+
+                    // Update task status
+                    updateTaskStatus("Connect to Server", TaskStatus.COMPLETED)
+                }
+            }
+
+            override fun onDataReceived(data: String) {
+                runOnUiThread {
+                    terminalView.appendData(data)
+                }
+            }
+
+            override fun onDisconnected() {
+                runOnUiThread {
+                    isConnected = false
+                    connectButton.text = "Connect"
+                    terminalView.appendData("\n[Disconnected]\n")
+                    updateStatusBar()
+                }
+            }
+
+            override fun onError(error: String) {
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "Error: $error", Toast.LENGTH_LONG).show()
+                    terminalView.appendData("\n[Error: $error]\n")
+
+                    // Add error to history
+                    addHistoryItem(HistoryItem(
+                        command = "Connection Error",
+                        timestamp = System.currentTimeMillis(),
+                        success = false,
+                        output = error
+                    ))
+                }
+            }
+        })
+
+        wsClient?.connect()
+    }
+
+    private fun disconnect() {
+        wsClient?.disconnect()
+        isConnected = false
+        connectButton.text = "Connect"
+        updateStatusBar()
+    }
+
+    // Task management methods
+    private fun addTask(task: Task) {
+        taskList.add(task)
+        taskAdapter.notifyItemInserted(taskList.size - 1)
+    }
+
+    private fun updateTaskStatus(taskTitle: String, status: TaskStatus) {
+        val index = taskList.indexOfFirst { it.title == taskTitle }
+        if (index != -1) {
+            taskList[index].status = status
+            taskAdapter.notifyItemChanged(index)
+        }
+    }
+
+    private fun onTaskClicked(task: Task) {
+        // Handle task click - could switch to terminal and run associated command
+        Toast.makeText(this, "Task: ${task.title}", Toast.LENGTH_SHORT).show()
+    }
+
+    // History management methods
+    private fun addHistoryItem(item: HistoryItem) {
+        historyList.add(0, item) // Add to top
+        historyAdapter.notifyItemInserted(0)
+
+        // Limit history size
+        if (historyList.size > 100) {
+            historyList.removeAt(historyList.size - 1)
+            historyAdapter.notifyItemRemoved(historyList.size)
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (!isConnected || event == null) return super.onKeyDown(keyCode, event)
+
+        return when (keyCode) {
+            KeyEvent.KEYCODE_ENTER -> {
+                wsClient?.sendInput("\r")
+                true
+            }
+            KeyEvent.KEYCODE_DEL -> {
+                wsClient?.sendInput("")
+                true
+            }
+            KeyEvent.KEYCODE_TAB -> {
+                wsClient?.sendInput("\t")
+                true
+            }
+            else -> {
+                if (event.isCtrlPressed) {
+                    when (keyCode) {
+                        KeyEvent.KEYCODE_C -> {
+                            wsClient?.sendInput("") // Ctrl-C
+                            return true
+                        }
+                        KeyEvent.KEYCODE_D -> {
+                            wsClient?.sendInput("") // Ctrl-D
+                            return true
+                        }
+                        KeyEvent.KEYCODE_Z -> {
+                            wsClient?.sendInput("") // Ctrl-Z
+                            return true
+                        }
+                    }
+                }
+
+                event.unicodeChar.takeIf { it != 0 }?.let {
+                    wsClient?.sendInput(it.toChar().toString())
+                    true
+                } ?: super.onKeyDown(keyCode, event)
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        wsClient?.disconnect()
+    }
+}
+
+// Data classes for tasks and history
+
+data class HistoryItem(
+    val command: String,
+    val timestamp: Long,
+    val success: Boolean,
+    val output: String = ""
+)

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>WebSocket Test</title>
+</head>
+<body>
+    <h1>WebSocket 连接测试</h1>
+    <div id="status">连接中...</div>
+    <input id="input" type="text" placeholder="输入命令" style="width: 300px;">
+    <button onclick="send()">发送</button>
+    <pre id="output" style="background: #000; color: #0f0; padding: 10px; min-height: 200px;"></pre>
+
+    <script>
+        const ws = new WebSocket('ws://localhost:3000');
+        const output = document.getElementById('output');
+        const status = document.getElementById('status');
+
+        ws.onopen = () => {
+            status.textContent = '✅ 已连接';
+            status.style.color = 'green';
+        };
+
+        ws.onmessage = (event) => {
+            output.textContent += event.data;
+            output.scrollTop = output.scrollHeight;
+        };
+
+        ws.onerror = (error) => {
+            status.textContent = '❌ 连接错误';
+            status.style.color = 'red';
+            console.error(error);
+        };
+
+        ws.onclose = () => {
+            status.textContent = '⚠️ 连接关闭';
+            status.style.color = 'orange';
+        };
+
+        function send() {
+            const input = document.getElementById('input');
+            if (input.value) {
+                ws.send(input.value + '\r');
+                input.value = '';
+            }
+        }
+
+        document.getElementById('input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                send();
+            }
+        });
+    </script>
+</body>
+</html>

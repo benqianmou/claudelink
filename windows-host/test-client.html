@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Claude Link Test Client</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      background: #0a0d12;
+      color: #e0e0e0;
+    }
+    #terminal {
+      background: #0f131c;
+      padding: 16px;
+      border-radius: 8px;
+      min-height: 400px;
+      max-height: 600px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    #input {
+      margin-top: 12px;
+      width: 100%;
+      padding: 12px;
+      background: #161d2b;
+      border: 1px solid #1e2636;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    #status {
+      margin-bottom: 12px;
+      padding: 8px 12px;
+      background: #161d2b;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .connected { color: #6ee7b7; }
+    .disconnected { color: #f87171; }
+
+    /* ANSI 色彩 */
+    .ansi-30 { color: #000000; }
+    .ansi-31 { color: #cd3131; }
+    .ansi-32 { color: #0dbc79; }
+    .ansi-33 { color: #e5e510; }
+    .ansi-34 { color: #2472c8; }
+    .ansi-35 { color: #bc3fbc; }
+    .ansi-36 { color: #11a8cd; }
+    .ansi-37 { color: #e5e5e5; }
+
+    /* 高亮色彩 */
+    .ansi-90 { color: #666666; }
+    .ansi-91 { color: #f14c4c; }
+    .ansi-92 { color: #23d18b; }
+    .ansi-93 { color: #f5f543; }
+    .ansi-94 { color: #3b8eea; }
+    .ansi-95 { color: #d670d6; }
+    .ansi-96 { color: #29b8db; }
+    .ansi-97 { color: #ffffff; }
+
+    /* 背景色 */
+    .ansi-40 { background-color: #000000; }
+    .ansi-41 { background-color: #cd3131; }
+    .ansi-42 { background-color: #0dbc79; }
+    .ansi-43 { background-color: #e5e510; }
+    .ansi-44 { background-color: #2472c8; }
+    .ansi-45 { background-color: #bc3fbc; }
+    .ansi-46 { background-color: #11a8cd; }
+    .ansi-47 { background-color: #e5e5e5; }
+
+    /* 样式 */
+    .ansi-1 { font-weight: bold; }
+    .ansi-3 { font-style: italic; }
+    .ansi-4 { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div id="status">Status: <span class="disconnected">Disconnected</span></div>
+  <div id="terminal"></div>
+  <input id="input" type="text" placeholder="Type command and press Enter...">
+
+  <script>
+    const terminal = document.getElementById('terminal');
+    const input = document.getElementById('input');
+    const status = document.getElementById('status');
+    let ws = null;
+
+    // ANSI 解析器
+    class AnsiParser {
+      constructor() {
+        this.currentStyles = new Set();
+      }
+
+      parse(text) {
+        const fragments = [];
+        let lastIndex = 0;
+
+        // 匹配 ANSI CSI 序列: ESC [ ... m
+        const ansiRegex = /\x1B\[([0-9;]*)m/g;
+        let match;
+
+        while ((match = ansiRegex.exec(text)) !== null) {
+          // 添加匹配之前的文本
+          if (match.index > lastIndex) {
+            const plainText = text.substring(lastIndex, match.index);
+            if (plainText) {
+              fragments.push({
+                text: plainText,
+                classes: Array.from(this.currentStyles)
+              });
+            }
+          }
+
+          // 处理 ANSI 码
+          const codes = match[1] ? match[1].split(';').map(c => parseInt(c) || 0) : [0];
+          codes.forEach(code => {
+            if (code === 0) {
+              // 重置所有样式
+              this.currentStyles.clear();
+            } else if (code >= 30 && code <= 37) {
+              // 前景色
+              this.currentStyles.forEach(s => {
+                if (s.startsWith('ansi-3') || s.startsWith('ansi-9')) {
+                  this.currentStyles.delete(s);
+                }
+              });
+              this.currentStyles.add(`ansi-${code}`);
+            } else if (code >= 40 && code <= 47) {
+              // 背景色
+              this.currentStyles.forEach(s => {
+                if (s.startsWith('ansi-4') && s !== 'ansi-4') {
+                  this.currentStyles.delete(s);
+                }
+              });
+              this.currentStyles.add(`ansi-${code}`);
+            } else if (code >= 90 && code <= 97) {
+              // 高亮前景色
+              this.currentStyles.forEach(s => {
+                if (s.startsWith('ansi-3') || s.startsWith('ansi-9')) {
+                  this.currentStyles.delete(s);
+                }
+              });
+              this.currentStyles.add(`ansi-${code}`);
+            } else if (code === 1 || code === 3 || code === 4) {
+              // 加粗/斜体/下划线
+              this.currentStyles.add(`ansi-${code}`);
+            }
+          });
+
+          lastIndex = match.index + match[0].length;
+        }
+
+        // 添加剩余文本
+        if (lastIndex < text.length) {
+          const plainText = text.substring(lastIndex);
+          if (plainText) {
+            fragments.push({
+              text: plainText,
+              classes: Array.from(this.currentStyles)
+            });
+          }
+        }
+
+        return fragments;
+      }
+
+      toHtml(fragments) {
+        return fragments.map(frag => {
+          if (frag.classes.length === 0) {
+            return this.escapeHtml(frag.text);
+          }
+          return `<span class="${frag.classes.join(' ')}">${this.escapeHtml(frag.text)}</span>`;
+        }).join('');
+      }
+
+      escapeHtml(text) {
+        return text
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+      }
+
+      // 清理其他控制序列（光标移动、清屏等）
+      cleanControlSequences(text) {
+        return text
+          // 清屏
+          .replace(/\x1B\[2J/g, '')
+          .replace(/\x1B\[H/g, '')
+          .replace(/\x1B\[3J/g, '')
+          // 光标移动
+          .replace(/\x1B\[[0-9]*[ABCDEFG]/g, '')
+          .replace(/\x1B\[[0-9;]*H/g, '')
+          // 清除行
+          .replace(/\x1B\[K/g, '')
+          .replace(/\x1B\[[012]K/g, '')
+          // 其他
+          .replace(/\x1B\[\?[0-9;]*[a-zA-Z]/g, '')
+          .replace(/\x1B\][^\x07]*\x07/g, '');
+      }
+    }
+
+    const parser = new AnsiParser();
+    let terminalContent = '';
+
+    function appendToTerminal(text) {
+      // 清理控制序列
+      const cleaned = parser.cleanControlSequences(text);
+
+      // 解析 ANSI 色彩
+      const fragments = parser.parse(cleaned);
+      const html = parser.toHtml(fragments);
+
+      // 追加到终端
+      terminal.innerHTML += html;
+
+      // 自动滚动
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    function connect() {
+      ws = new WebSocket('ws://localhost:3000');
+
+      ws.onopen = () => {
+        status.innerHTML = 'Status: <span class="connected">Connected</span>';
+        appendToTerminal('[Client] Connected to server\n');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+
+          if (msg.type === 'output') {
+            appendToTerminal(msg.data);
+          } else if (msg.type === 'history') {
+            // 历史记录
+            terminal.innerHTML = '';
+            msg.data.forEach(line => {
+              try {
+                const historyMsg = JSON.parse(line);
+                if (historyMsg.type === 'output') {
+                  appendToTerminal(historyMsg.data);
+                }
+              } catch (e) {
+                // 忽略解析错误
+              }
+            });
+          } else if (msg.type === 'pty_exited') {
+            appendToTerminal(`\n[PTY Exited with code ${msg.exitCode}]\n`);
+          } else if (msg.type === 'error') {
+            appendToTerminal(`\n[Error] ${msg.message}\n`);
+          } else if (msg.type === 'client_count') {
+            console.log(`Connected clients: ${msg.count}`);
+          }
+        } catch (e) {
+          console.error('Message parse error:', e);
+        }
+      };
+
+      ws.onerror = (error) => {
+        appendToTerminal('[Client] Connection error\n');
+      };
+
+      ws.onclose = () => {
+        status.innerHTML = 'Status: <span class="disconnected">Disconnected</span>';
+        appendToTerminal('[Client] Disconnected\n');
+      };
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && ws && ws.readyState === WebSocket.OPEN) {
+        const command = input.value;
+        ws.send(command + '\r');  // 直接发送文本，不用 JSON
+        input.value = '';
+      }
+    });
+
+    connect();
+  </script>
+</body>
+</html>

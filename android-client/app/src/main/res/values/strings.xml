@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ClaudeLink</string>
+
+    <!-- Task Board Strings -->
+    <string name="no_description">No description provided</string>
+    <string name="empty_state_title">No Tasks Yet</string>
+    <string name="empty_state_message">Add your first task to get started</string>
+    <string name="task_deleted">Task deleted</string>
+    <string name="undo">Undo</string>
+
+    <!-- Task Status -->
+    <string name="status_pending">Pending</string>
+    <string name="status_in_progress">In Progress</string>
+    <string name="status_completed">Completed</string>
+    <string name="status_blocked">Blocked</string>
+    <string name="status_cancelled">Cancelled</string>
+
+    <!-- Task Priority -->
+    <string name="priority_low">Low Priority</string>
+    <string name="priority_medium">Medium Priority</string>
+    <string name="priority_high">High Priority</string>
+    <string name="priority_urgent">Urgent</string>
+</resources>

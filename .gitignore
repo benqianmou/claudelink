@@ -1,0 +1,44 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build outputs
+dist/
+build/
+*.apk
+*.aab
+
+# Android
+*.iml
+.gradle/
+local.properties
+.idea/
+.externalNativeBuild/
+.cxx/
+
+# Temporary files
+*.tmp
+*.temp
+server-*.log

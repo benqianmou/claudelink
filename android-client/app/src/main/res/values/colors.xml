@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material Design 3 深色主题 - 渐变配色 -->
+    <color name="background_start">#0A0E14</color>
+    <color name="background_end">#1A1F2E</color>
+    <color name="surface">#1E2636</color>
+    <color name="surface_elevated">#2A3142</color>
+    <color name="surface_card">#242938</color>
+
+    <!-- 主色 - 渐变蓝紫 -->
+    <color name="primary">#6366F1</color>
+    <color name="primary_variant">#8B5CF6</color>
+    <color name="primary_light">#A78BFA</color>
+    <color name="primary_dark">#4C1D95</color>
+
+    <!-- 强调色 - 青色 -->
+    <color name="accent">#06B6D4</color>
+    <color name="accent_light">#22D3EE</color>
+
+    <!-- 状态颜色 - 更鲜艳 -->
+    <color name="success">#10B981</color>
+    <color name="success_light">#34D399</color>
+    <color name="warning">#F59E0B</color>
+    <color name="warning_light">#FBBF24</color>
+    <color name="error">#F43F5E</color>
+    <color name="error_light">#FB7185</color>
+    <color name="info">#3B82F6</color>
+
+    <!-- 文本颜色 -->
+    <color name="text_primary">#F9FAFB</color>
+    <color name="text_secondary">#D1D5DB</color>
+    <color name="text_tertiary">#9CA3AF</color>
+    <color name="text_disabled">#6B7280</color>
+    <color name="text_hint">#4B5563</color>
+
+    <!-- 边框和分隔线 -->
+    <color name="border">#374151</color>
+    <color name="border_light">#4B5563</color>
+    <color name="divider">#1F2937</color>
+
+    <!-- 半透明颜色 -->
+    <color name="overlay_light">#1AFFFFFF</color>
+    <color name="overlay_dark">#40000000</color>
+    <color name="glass_bg">#20FFFFFF</color>
+
+    <!-- 终端颜色 -->
+    <color name="terminal_bg">#0F131C</color>
+    <color name="terminal_text">#E5E7EB</color>
+    <color name="terminal_cursor">#06B6D4</color>
+
+    <!-- 按钮颜色 -->
+    <color name="button_primary">#6366F1</color>
+    <color name="button_secondary">#374151</color>
+    <color name="button_success">#10B981</color>
+    <color name="button_danger">#EF4444</color>
+
+    <!-- 空状态颜色 -->
+    <color name="empty_state_icon">#4B5563</color>
+    <color name="empty_state_text">#6B7280</color>
+
+    <!-- 卡片边框 -->
+    <color name="card_stroke">#374151</color>
+
+    <!-- 状态颜色扩展 -->
+    <color name="status_pending">#F59E0B</color>
+</resources>
