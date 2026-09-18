@@ -7,6 +7,16 @@ android {
     namespace = "com.claudelink"
     compileSdk = 34
 
+    // Force Java 17 toolchain to avoid Java 25 parsing issues
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
     defaultConfig {
         applicationId = "com.claudelink"
         minSdk = 24
