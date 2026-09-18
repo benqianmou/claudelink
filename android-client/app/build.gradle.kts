@@ -3,6 +3,24 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// 强制禁用Kotlin的Java版本检查
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    kotlinOptions {
+        jvmTarget = "17"
+        freeCompilerArgs += listOf("-Xsuppress-version-warnings")
+    }
+}
+
+// 禁用Gradle工具链自动下载，强制使用当前JDK
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(17))
+        vendor.set(JvmVendorSpec.JETBRAINS)
+    }
+    // 如果上面还是尝试下载，就完全禁用工具链
+    disableAutoTargetJvm()
+}
+
 android {
     namespace = "com.claudelink"
     compileSdk = 34
@@ -37,6 +55,12 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+        freeCompilerArgs += listOf(
+            "-Xjvm-default=all",
+            "-Xno-param-assertions",
+            "-Xno-call-assertions",
+            "-Xno-receiver-assertions"
+        )
     }
     buildFeatures {
         viewBinding = true

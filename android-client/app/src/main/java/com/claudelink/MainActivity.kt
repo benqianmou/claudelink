@@ -81,7 +81,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun connectToServer(server: String) {
-        val url = "ws://$server"
+        val url = when {
+            server.startsWith("ws://", ignoreCase = true) ||
+                server.startsWith("wss://", ignoreCase = true) -> server
+            else -> "ws://$server"
+        }
 
         wsClient = WebSocketClient(url, object : WebSocketClient.Listener {
             override fun onConnected() {

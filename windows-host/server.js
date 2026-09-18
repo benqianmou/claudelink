@@ -4,6 +4,8 @@ const WebSocket = require('ws');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const ngrok = require('ngrok');
+const ClaudeSessionDetector = require('./session-detector');
 
 const PORT = process.env.PORT || 3000;
 const CLAUDE_CMD = process.env.CLAUDE_CMD || 'C:\\Users\\Lenovo\\.local\\bin\\claude.exe';
@@ -162,6 +164,17 @@ class SessionManager {
 }
 
 const server = http.createServer((req, res) => {
+  // 允许跨域访问和隧道访问
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(200);
+    res.end();
+    return;
+  }
+
   const filePath = req.url === '/' ? 'public/index.html' : `public${req.url}`;
   const fullPath = path.join(__dirname, filePath);
 
@@ -180,6 +193,16 @@ const server = http.createServer((req, res) => {
 
 const sessionManager = new SessionManager();
 const wss = new WebSocket.Server({ server });
+
+// 启动 Claude session 检测器
+const sessionDetector = new ClaudeSessionDetector((data) => {
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(data));
+    }
+  });
+});
+sessionDetector.start();
 
 wss.on('connection', (ws) => {
   console.log('[WebSocket] Client connected');
@@ -218,4 +241,142 @@ console.log(`[Server] WebSocket listening on ws://0.0.0.0:${PORT}`);
 console.log(`[Server] HTTP server on http://localhost:${PORT}`);
 console.log(`[Server] Claude command: ${CLAUDE_CMD}`);
 
-server.listen(PORT);
+let tunnelUrl = null;
+let shuttingDown = false;
+
+async function openTunnel(retryCount = 0) {
+  if (shuttingDown || tunnelUrl) return;
+
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY = 2000;
+
+  try {
+    console.log('[Tunnel] Initializing ngrok...');
+
+    // 先断开所有现有连接
+    try {
+      await ngrok.kill();
+      await new Promise(resolve => setTimeout(resolve, 500));
+    } catch (e) {
+      // 忽略
+    }
+
+    // 验证 authtoken
+    if (!process.env.NGROK_AUTHTOKEN) {
+      throw new Error('NGROK_AUTHTOKEN 未设置');
+    }
+
+    console.log('[Tunnel] 使用 authtoken:', process.env.NGROK_AUTHTOKEN.substring(0, 10) + '...');
+
+    // 尝试多个 region，从最近的开始
+    const regions = ['us', 'ap', 'eu', 'au', 'sa', 'jp', 'in'];
+    const primaryRegion = process.env.NGROK_REGION || 'us';
+    const sortedRegions = [primaryRegion, ...regions.filter(r => r !== primaryRegion)];
+
+    let lastError = null;
+
+    for (const region of sortedRegions) {
+      try {
+        console.log(`[Tunnel] 尝试 ${region} 区域...`);
+
+        const config = {
+          authtoken: process.env.NGROK_AUTHTOKEN,
+          addr: PORT,
+          region: region,
+          onStatusChange: status => console.log('[Tunnel] Status:', status),
+          onLogEvent: data => {
+            if (data.lvl === 'eror' || data.lvl === 'warn') {
+              console.log('[Tunnel] Log:', data.msg);
+            }
+          }
+        };
+
+        tunnelUrl = await ngrok.connect(config);
+
+        // 成功了就跳出
+        console.log(`[Tunnel] ✓ 成功连接到 ${region} 区域`);
+        break;
+
+      } catch (err) {
+        lastError = err;
+        console.log(`[Tunnel] ${region} 区域失败:`, err.message);
+
+        // 清理后再试下一个
+        try {
+          await ngrok.disconnect();
+          await new Promise(resolve => setTimeout(resolve, 300));
+        } catch (e) {}
+
+        // 继续尝试下一个区域
+        continue;
+      }
+    }
+
+    // 所有区域都失败了
+    if (!tunnelUrl) {
+      throw lastError || new Error('所有区域都连接失败');
+    }
+
+    console.log('');
+    console.log('='.repeat(60));
+    console.log('[Tunnel] ✓ Ngrok 内网穿透已启动！');
+    console.log('[Tunnel] 公网访问地址: ' + tunnelUrl);
+    console.log('[Tunnel] WebSocket地址: ' + tunnelUrl.replace('http://', 'ws://').replace('https://', 'wss://'));
+    console.log('='.repeat(60));
+    console.log('');
+
+  } catch (err) {
+    console.error('[Tunnel] Failed to start ngrok:', err.message);
+    console.error('[Tunnel] 完整错误:', err);
+
+    tunnelUrl = null;
+
+    // 自动重试
+    if (retryCount < MAX_RETRIES &&
+        (err.message.includes('gone away') || err.message.includes('ECONNREFUSED'))) {
+      console.log(`[Tunnel] ${RETRY_DELAY/1000}秒后重试 (${retryCount + 1}/${MAX_RETRIES})...`);
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      return openTunnel(retryCount + 1);
+    }
+
+    console.log('');
+    console.log('[Tunnel] ⚠️  故障排查步骤:');
+    console.log('[Tunnel]   1. 检查网络连接');
+    console.log('[Tunnel]   2. 验证 authtoken 是否有效: https://dashboard.ngrok.com/get-started/your-authtoken');
+    console.log('[Tunnel]   3. 尝试删除 ngrok 配置: del %USERPROFILE%\\.ngrok2\\ngrok.yml');
+    console.log('[Tunnel]   4. 尝试手动运行: ngrok http 3000 --authtoken=你的token');
+    console.log('[Tunnel]   5. 如果仍然失败，可能是 ngrok 服务暂时不可用');
+    console.log('');
+  }
+}
+
+server.listen(PORT, () => {
+  console.log(`[Server] Server started on port ${PORT}`);
+
+  if (process.env.ENABLE_TUNNEL === 'true') {
+    openTunnel();
+  } else {
+    console.log('[Tunnel] Tunnel disabled (set ENABLE_TUNNEL=true to enable)');
+  }
+});
+
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  if (tunnelUrl) {
+    try {
+      await ngrok.disconnect();
+      await ngrok.kill();
+      console.log('[Tunnel] Ngrok disconnected');
+    } catch (err) {
+      console.error('[Tunnel] Error disconnecting:', err.message);
+    }
+  }
+
+  sessionDetector.stop();
+  server.close(() => process.exit(0));
+}
+
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);

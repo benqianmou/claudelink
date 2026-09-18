@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tunnel Connection Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-box {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover { background: #0056b3; }
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>🌐 Tunnel Connection Test</h1>
+
+    <div class="test-box">
+        <h2>步骤 1: HTTP 连接测试</h2>
+        <div class="status success">
+            ✓ 你已成功访问此页面！HTTP 连接正常。
+        </div>
+        <p>当前访问地址: <code id="currentUrl"></code></p>
+    </div>
+
+    <div class="test-box">
+        <h2>步骤 2: WebSocket 连接测试</h2>
+        <button onclick="testWebSocket()">测试 WebSocket 连接</button>
+        <div id="wsStatus" style="margin-top: 10px;"></div>
+    </div>
+
+    <div class="test-box">
+        <h2>连接信息</h2>
+        <p><strong>协议:</strong> <span id="protocol"></span></p>
+        <p><strong>主机:</strong> <span id="host"></span></p>
+        <p><strong>WebSocket 地址:</strong> <code id="wsUrl"></code></p>
+    </div>
+
+    <div class="test-box">
+        <h2>故障排查</h2>
+        <ul>
+            <li>如果看到 localtunnel 警告页面，点击 "Continue" 按钮继续</li>
+            <li>确保服务器正在运行 (npm start)</li>
+            <li>检查 .env 中 ENABLE_TUNNEL=true</li>
+            <li>WebSocket 连接需要使用 wss:// 协议（HTTPS 下）或 ws:// 协议（HTTP 下）</li>
+        </ul>
+    </div>
+
+    <script>
+        // 显示当前 URL
+        document.getElementById('currentUrl').textContent = window.location.href;
+        document.getElementById('protocol').textContent = window.location.protocol;
+        document.getElementById('host').textContent = window.location.host;
+
+        // 构造 WebSocket URL
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}`;
+        document.getElementById('wsUrl').textContent = wsUrl;
+
+        function testWebSocket() {
+            const statusDiv = document.getElementById('wsStatus');
+            statusDiv.innerHTML = '<div class="status info">⏳ 正在连接 WebSocket...</div>';
+
+            try {
+                const ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    statusDiv.innerHTML = '<div class="status success">✓ WebSocket 连接成功！</div>';
+                    ws.close();
+                };
+
+                ws.onerror = (error) => {
+                    statusDiv.innerHTML = '<div class="status error">✗ WebSocket 连接失败<br>错误: ' + error + '</div>';
+                };
+
+                ws.onclose = (event) => {
+                    if (!event.wasClean) {
+                        statusDiv.innerHTML = '<div class="status error">✗ WebSocket 连接异常关闭<br>代码: ' + event.code + '</div>';
+                    }
+                };
+
+                // 超时检测
+                setTimeout(() => {
+                    if (ws.readyState !== WebSocket.OPEN) {
+                        ws.close();
+                        statusDiv.innerHTML = '<div class="status error">✗ WebSocket 连接超时</div>';
+                    }
+                }, 5000);
+
+            } catch (e) {
+                statusDiv.innerHTML = '<div class="status error">✗ 无法创建 WebSocket 连接<br>错误: ' + e.message + '</div>';
+            }
+        }
+
+        // 自动测试
+        window.addEventListener('load', () => {
+            setTimeout(testWebSocket, 1000);
+        });
+    </script>
+</body>
+</html>

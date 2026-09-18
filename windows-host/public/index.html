@@ -163,6 +163,56 @@
       margin: 2px 2px 8px;
     }
     .task-section + .task-section { margin-top: 18px; }
+
+    /* Claude 状态卡片 */
+    #claude-status {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      animation: slideIn 0.25s ease;
+    }
+    #claude-status.inactive {
+      border-left-color: var(--border);
+      opacity: 0.6;
+    }
+    .claude-status-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12.5px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .claude-status-icon {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+    #claude-status.inactive .claude-status-icon {
+      background: var(--text-dim);
+      box-shadow: none;
+    }
+    .claude-status-body {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+    .claude-status-row {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 3px;
+    }
+    .claude-status-label { opacity: 0.7; }
+    .claude-status-value {
+      font-family: "JetBrains Mono", Consolas, monospace;
+      color: var(--text);
+    }
+
     .task-card {
       background: var(--bg);
       border: 1px solid var(--border);
@@ -265,6 +315,400 @@
       .btn { min-height: 38px; }
       #status-bar { gap: 8px; padding: 8px 10px; }
     }
+
+    /* 会话详情面板 */
+    .panel-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(5, 7, 12, 0.7);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 300ms, visibility 300ms;
+      z-index: 999;
+    }
+    .panel-overlay.show {
+      opacity: 1;
+      visibility: visible;
+    }
+    .session-detail-panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: min(600px, 90vw);
+      height: 100%;
+      background: var(--bg);
+      border-left: 1px solid var(--border);
+      transform: translateX(100%);
+      transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+    }
+    .session-detail-panel.open {
+      transform: translateX(0);
+    }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-hover);
+    }
+    .panel-header h2 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .close-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 28px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0;
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .close-btn:hover {
+      background: var(--border);
+      color: var(--text);
+    }
+    .panel-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+    .session-info-card {
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    .session-info-card .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .session-info-card .project-name {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .session-info-card .meta-row {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+    .tasks-section {
+      margin-bottom: 20px;
+    }
+    .tasks-section h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-dim);
+      margin: 0 0 12px 0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .detail-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      position: sticky;
+      bottom: 0;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      padding: 12px 16px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      border-bottom: 2px solid transparent;
+      transition: all 150ms;
+    }
+    .tab-btn:hover {
+      color: var(--text);
+    }
+    .tab-btn.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .tab-content {
+      padding: 16px;
+      min-height: 300px;
+    }
+    .tab-pane {
+      display: none;
+    }
+    .tab-pane.active {
+      display: block;
+    }
+    #detail-terminal {
+      height: 400px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .history-list, .summary-content {
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .history-item {
+      padding: 12px;
+      background: var(--bg-hover);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      border-left: 3px solid var(--accent);
+    }
+    .history-item .timestamp {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+    .history-item .command {
+      font-family: 'SF Mono', Consolas, monospace;
+      color: var(--text);
+    }
+    .summary-section {
+      margin-bottom: 20px;
+    }
+    .summary-section h4 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      margin: 0 0 8px 0;
+    }
+    .summary-section ul {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--text-dim);
+    }
+    .summary-section li {
+      margin-bottom: 4px;
+    }
+
+    /* ── 会话详情面板 ── */
+    .panel-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.3s ease;
+      z-index: 100;
+    }
+    .panel-overlay.show {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .session-detail-panel {
+      position: fixed;
+      top: 0;
+      right: -480px;
+      width: 480px;
+      max-width: 90vw;
+      height: 100vh;
+      background: var(--surface);
+      box-shadow: -4px 0 24px rgba(0, 0, 0, 0.5);
+      transition: right 0.3s ease;
+      z-index: 101;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .session-detail-panel.open {
+      right: 0;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+    .panel-header h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .close-btn {
+      background: none;
+      border: none;
+      font-size: 28px;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 0;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+    .close-btn:hover {
+      background: var(--surface-2);
+      color: var(--text);
+    }
+
+    .panel-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    .session-info-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .session-info-card .status-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .session-info-card .project-name {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .session-info-card .meta-row {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    .tasks-section {
+      margin-bottom: 20px;
+    }
+    .tasks-section h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .task-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .task-card.done {
+      opacity: 0.7;
+    }
+    .task-spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .task-text {
+      flex: 1;
+      font-family: 'SF Mono', Consolas, monospace;
+      font-size: 13px;
+      color: var(--text);
+      word-break: break-all;
+    }
+    .task-meta {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 4px;
+    }
+
+    .detail-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 20px;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      padding: 12px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-dim);
+      cursor: pointer;
+      position: relative;
+      transition: color 0.2s;
+    }
+    .tab-btn:hover {
+      color: var(--text);
+    }
+    .tab-btn.active {
+      color: var(--accent);
+    }
+    .tab-btn.active::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent);
+    }
+
+    .tab-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+    }
+    .tab-pane {
+      display: none;
+    }
+    .tab-pane.active {
+      display: block;
+    }
+
+    @media (max-width: 900px) {
+      .session-detail-panel {
+        width: 100vw;
+        max-width: 100vw;
+        right: -100vw;
+      }
+    }
   </style>
 </head>
 <body>
@@ -290,6 +734,15 @@
       </div>
       <div class="board-scroll">
         <div class="task-section">
+          <div class="task-section-title">Claude Code</div>
+          <div id="claude-status" class="inactive">
+            <div class="claude-status-header">
+              <div class="claude-status-icon"></div>
+              <span>未检测到活动会话</span>
+            </div>
+          </div>
+        </div>
+        <div class="task-section">
           <div class="task-section-title">进行中</div>
           <div id="active-tasks"><div class="task-empty">暂无任务</div></div>
         </div>
@@ -306,6 +759,53 @@
 
   <div id="backdrop"></div>
   <div class="error-toast" id="error-toast"></div>
+
+  <!-- 会话详情面板 -->
+  <div class="panel-overlay" id="panel-overlay"></div>
+  <div class="session-detail-panel" id="session-detail-panel">
+    <div class="panel-header">
+      <h2>Claude Code 会话详情</h2>
+      <button class="close-btn" id="close-panel-btn">&times;</button>
+    </div>
+    <div class="panel-content">
+      <div class="session-info-card" id="session-info">
+        <div class="status-row">
+          <div class="claude-status-icon"></div>
+          <span class="project-name">加载中...</span>
+        </div>
+        <div class="meta-row">PID: - | 工作目录: -</div>
+      </div>
+
+      <div class="tasks-section" id="panel-tasks-section">
+        <h3>进行中</h3>
+        <div id="panel-active-tasks"></div>
+      </div>
+
+      <div class="tasks-section" id="panel-history-section">
+        <h3>历史</h3>
+        <div id="panel-task-history"></div>
+      </div>
+    </div>
+
+    <div class="detail-tabs">
+      <button class="tab-btn active" data-tab="overview">概览</button>
+      <button class="tab-btn" data-tab="history">输入历史</button>
+      <button class="tab-btn" data-tab="terminal">终端输出</button>
+    </div>
+    <div class="tab-content">
+      <div class="tab-pane active" id="tab-overview">
+        <div class="summary-content" id="session-summary">
+          <p style="color: var(--text-dim);">等待会话数据...</p>
+        </div>
+      </div>
+      <div class="tab-pane" id="tab-history">
+        <div class="history-list" id="input-history"></div>
+      </div>
+      <div class="tab-pane" id="tab-terminal">
+        <div id="detail-terminal"></div>
+      </div>
+    </div>
+  </div>
 
   <script type="module">
     import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm';
@@ -512,7 +1012,7 @@
 
       if (!term) initTerminal();
 
-      const wsUrl = `ws://${window.location.hostname}:${window.location.port || 3000}`;
+      const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
       ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
@@ -546,6 +1046,8 @@
           } else if (msg.type === 'pty_exited') {
             taskBoard.finish();
             term.write(`\r\n[PTY 已退出，退出码 ${msg.exitCode}]\r\n`);
+          } else if (msg.type === 'claude_status') {
+            updateClaudeStatus(msg);
           }
         } catch (err) {
           term.write(e.data);
@@ -574,6 +1076,50 @@
       setTimeout(() => errorToast.classList.remove('show'), 3000);
     }
 
+    function updateClaudeStatus(msg) {
+      const container = $('claude-status');
+      if (!msg.active) {
+        container.className = 'inactive';
+        container.innerHTML = `
+          <div class="claude-status-header">
+            <div class="claude-status-icon"></div>
+            <span>未检测到活动会话</span>
+          </div>`;
+        container.style.cursor = 'default';
+        container.onclick = null;
+        return;
+      }
+
+      container.className = '';
+      const s = msg;
+      const statusText = s.status === 'busy' ? '运行中' : '空闲';
+      const projectName = s.projectName || '未命名项目';
+      container.innerHTML = `
+        <div class="claude-status-header">
+          <div class="claude-status-icon"></div>
+          <span>${projectName}</span>
+        </div>
+        <div class="claude-status-body">
+          <div class="claude-status-row">
+            <span class="claude-status-label">状态</span>
+            <span class="claude-status-value">${statusText}</span>
+          </div>
+          <div class="claude-status-row">
+            <span class="claude-status-label">PID</span>
+            <span class="claude-status-value">${s.pid}</span>
+          </div>
+          <div class="claude-status-row">
+            <span class="claude-status-label">工作目录</span>
+            <span class="claude-status-value" style="font-size: 10px; word-break: break-all;">${s.cwd}</span>
+          </div>
+        </div>`;
+
+      container.style.cursor = 'pointer';
+      container.onclick = () => openSessionPanel(msg);
+
+      window.lastClaudeStatus = msg;
+    }
+
     /* ── 看板折叠 / 移动端抽屉 ── */
     $('board-toggle').onclick = () => {
       if (window.innerWidth <= 900) {
@@ -596,6 +1142,182 @@
         ws?.send(JSON.stringify({ type: 'restart' }));
       }
     };
+
+    /* ── 会话详情面板 ── */
+    const panelOverlay = $('panel-overlay');
+    const sessionPanel = $('session-detail-panel');
+    const closePanelBtn = $('close-panel-btn');
+    let detailTerminal = null;
+
+    function openSessionPanel(msg) {
+      if (!msg || !msg.active) return;
+
+      updatePanelInfo(msg);
+      updatePanelTasks();
+      updatePanelTabs(msg);
+
+      panelOverlay.classList.add('show');
+      sessionPanel.classList.add('open');
+
+      if (!detailTerminal) {
+        setTimeout(() => initDetailTerminal(), 100);
+      }
+    }
+
+    function closeSessionPanel() {
+      panelOverlay.classList.remove('show');
+      sessionPanel.classList.remove('open');
+    }
+
+    closePanelBtn.onclick = closeSessionPanel;
+    panelOverlay.onclick = closeSessionPanel;
+
+    function updatePanelInfo(msg) {
+      const statusText = msg.status === 'busy' ? '运行中' : '空闲';
+      const projectName = msg.projectName || '未命名项目';
+      const cwd = msg.cwd || '-';
+      const pid = msg.pid || '-';
+
+      $('session-info').innerHTML = `
+        <div class="status-row">
+          <div class="claude-status-icon"></div>
+          <span class="project-name">${projectName}</span>
+        </div>
+        <div class="meta-row">PID: ${pid} | ${statusText}</div>
+        <div class="meta-row" style="word-break: break-all;">${cwd}</div>
+      `;
+    }
+
+    function updatePanelTasks() {
+      const running = taskBoard.tasks.filter(t => t.status === 'running');
+      const done = taskBoard.tasks.filter(t => t.status === 'done').slice(0, 10);
+
+      const activeContainer = $('panel-active-tasks');
+      const historyContainer = $('panel-task-history');
+
+      if (running.length === 0) {
+        activeContainer.innerHTML = '<div class="task-empty">暂无任务</div>';
+      } else {
+        activeContainer.innerHTML = running.map(t => {
+          const elapsed = Math.floor((Date.now() - t.start) / 1000);
+          return `
+            <div class="task-card">
+              <div class="task-spinner"></div>
+              <div class="task-text">${t.text}</div>
+              <div class="task-meta">执行中 · ${elapsed}s</div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      if (done.length === 0) {
+        historyContainer.innerHTML = '<div class="task-empty">暂无记录</div>';
+      } else {
+        historyContainer.innerHTML = done.map(t => {
+          const elapsed = Math.floor((t.end - t.start) / 1000);
+          return `
+            <div class="task-card done">
+              <div class="task-text">${t.text}</div>
+              <div class="task-meta">已完成 · ${elapsed}s</div>
+            </div>
+          `;
+        }).join('');
+      }
+    }
+
+    function updatePanelTabs(msg) {
+      const summaryContent = $('session-summary');
+      const inputHistoryList = $('input-history');
+
+      if (msg.summary) {
+        const { tasks, filesModified, toolsUsed } = msg.summary;
+        let html = '';
+
+        if (tasks && tasks.length > 0) {
+          html += '<div class="summary-section"><h4>任务</h4><ul>';
+          tasks.forEach(task => html += `<li>${task}</li>`);
+          html += '</ul></div>';
+        }
+
+        if (filesModified && filesModified.length > 0) {
+          html += '<div class="summary-section"><h4>修改的文件</h4><ul>';
+          filesModified.forEach(file => html += `<li>${file}</li>`);
+          html += '</ul></div>';
+        }
+
+        if (toolsUsed && toolsUsed.length > 0) {
+          html += '<div class="summary-section"><h4>使用的工具</h4><ul>';
+          toolsUsed.forEach(tool => html += `<li>${tool}</li>`);
+          html += '</ul></div>';
+        }
+
+        summaryContent.innerHTML = html || '<p style="color: var(--text-dim);">暂无摘要数据</p>';
+      }
+
+      if (msg.userInputs && msg.userInputs.length > 0) {
+        inputHistoryList.innerHTML = msg.userInputs.map(input => {
+          const date = new Date(input.timestamp);
+          const timeStr = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+          return `
+            <div class="history-item">
+              <div class="timestamp">${timeStr}</div>
+              <div class="command">${input.display}</div>
+            </div>
+          `;
+        }).join('');
+      } else {
+        inputHistoryList.innerHTML = '<p style="color: var(--text-dim);">暂无输入历史</p>';
+      }
+    }
+
+    function initDetailTerminal() {
+      const container = $('detail-terminal');
+      detailTerminal = new Terminal({
+        theme: {
+          background: '#0A0D12',
+          foreground: '#D4D4D4',
+          cursor: '#38BDF8'
+        },
+        fontSize: 13,
+        fontFamily: '"Cascadia Code", "SF Mono", Consolas, monospace',
+        cursorBlink: false,
+        disableStdin: true
+      });
+
+      detailTerminal.open(container);
+
+      if (term) {
+        const mainBuffer = term.buffer.active;
+        for (let i = 0; i < mainBuffer.length; i++) {
+          const line = mainBuffer.getLine(i);
+          if (line) {
+            detailTerminal.writeln(line.translateToString(true));
+          }
+        }
+      }
+    }
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.onclick = () => {
+        const targetTab = btn.getAttribute('data-tab');
+
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+
+        btn.classList.add('active');
+        $(`tab-${targetTab}`).classList.add('active');
+
+        if (targetTab === 'terminal' && detailTerminal) {
+          detailTerminal.fit?.();
+        }
+      };
+    });
+
+    setInterval(() => {
+      if (sessionPanel.classList.contains('open')) {
+        updatePanelTasks();
+      }
+    }, 1000);
   </script>
 </body>
 </html>
