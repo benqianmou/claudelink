@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  cleartext 必须在系统层面放行：局域网地址由用户现场输入，无法预先枚举成 domain-config 白名单。
+  信任边界改在代码里划：ServerAddress 只允许对内网/本机地址用明文，公网地址一律要求 https（自动升 wss）。
+-->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>

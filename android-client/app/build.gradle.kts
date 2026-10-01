@@ -11,11 +11,10 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
     }
 }
 
-// 禁用Gradle工具链自动下载，强制使用当前JDK
+// 使用本机任意厂商的 JDK 17（禁用厂商校验，避免找不到 JETBRAINS 版 JDK）
 java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(17))
-        vendor.set(JvmVendorSpec.JETBRAINS)
     }
     // 如果上面还是尝试下载，就完全禁用工具链
     disableAutoTargetJvm()
@@ -65,6 +64,12 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    // 单测跑纯逻辑（TaskBoard/ServerHistory）；Robolectric 测试要能读资源与主题
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
@@ -81,4 +86,13 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.6.2")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.cardview:cardview:1.0.0")
+
+    // 任务看板抽屉（index.html 的 #task-board 侧滑）
+    implementation("androidx.drawerlayout:drawerlayout:1.1.1")
+
+    testImplementation("junit:junit:4.13.2")
+
+    // 无设备也能真的 inflate 布局、跑 Activity 生命周期与网络回调（这台机器没有 AVD）
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.test:core:1.6.1")
 }

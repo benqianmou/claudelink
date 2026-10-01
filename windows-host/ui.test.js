@@ -3,54 +3,130 @@ const assert = require('node:assert');
 const http = require('http');
 const { spawn } = require('child_process');
 
+// 使用独立端口避免与用户运行的实例冲突；关闭隧道避免测试期间启动 ngrok
+const PORT = 3101;
+const TOKEN = 'uitest-token-abc123';
+const BASE = `http://127.0.0.1:${PORT}`;
+
 let serverProcess;
 
-test.before(() => {
-  return new Promise((resolve) => {
-    serverProcess = spawn('node', ['server.js'], {
-      cwd: __dirname,
-      stdio: 'ignore'
+function get(pathName, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(BASE + pathName, { headers, timeout: 5000 }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => resolve({ statusCode: res.statusCode, headers: res.headers, body: data }));
     });
-    setTimeout(resolve, 1000); // 等待服务器启动
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error(`timeout: ${pathName}`)); });
   });
+}
+
+async function waitForServer(timeoutMs = 8000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await get('/');
+      if (res.statusCode === 200) return;
+    } catch (e) {
+      // 尚未就绪，继续轮询
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+  throw new Error('server did not start in time');
+}
+
+test.before(async () => {
+  serverProcess = spawn(process.execPath, ['server.js'], {
+    cwd: __dirname,
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      ENABLE_TUNNEL: 'false',
+      ACCESS_TOKEN: TOKEN
+    },
+    stdio: 'ignore',
+    windowsHide: true
+  });
+  await waitForServer();
 });
 
 test.after(() => {
   if (serverProcess) serverProcess.kill();
 });
 
-test('HTTP server serves index.html', (t, done) => {
-  let completed = false;
-  const cleanup = (err) => {
-    if (completed) return;
-    completed = true;
-    done(err);
-  };
-
-  http.get('http://localhost:3000/', (res) => {
-    assert.strictEqual(res.statusCode, 200);
-    assert.strictEqual(res.headers['content-type'], 'text/html');
-
-    let data = '';
-    res.on('data', chunk => data += chunk);
-    res.on('end', () => {
-      assert.ok(data.includes('Claude Remote'), 'Should contain page title');
-      assert.ok(data.includes('terminal'), 'Should contain terminal element');
-      cleanup();
-    });
-  }).on('error', cleanup);
+test('HTTP server serves index.html', async () => {
+  const res = await get('/');
+  assert.strictEqual(res.statusCode, 200);
+  assert.ok(res.headers['content-type'].startsWith('text/html'));
+  assert.ok(res.body.includes('ClaudeLink Terminal'), 'Should contain page title');
+  assert.ok(res.body.includes('terminal-container'), 'Should contain terminal element');
+  assert.ok(res.body.includes('connect-btn'), 'Should contain connect button');
 });
 
-test('HTTP server returns 404 for missing files', (t, done) => {
-  let completed = false;
-  const cleanup = (err) => {
-    if (completed) return;
-    completed = true;
-    done(err);
+test('index.html ships Esc, Tab, arrow and Ctrl key buttons', async () => {
+  const res = await get('/');
+  // 期望的转义序列：Esc / Tab / 四方向键 / 回车 / Ctrl+C / Ctrl+D（与 xterm 默认按键输出一致）
+  const keys = {
+    esc: '\\x1b', tab: '\\t',
+    left: '\\x1b[D', up: '\\x1b[A', down: '\\x1b[B', right: '\\x1b[C',
+    enter: '\\r',
+    ctrlc: '\\x03', ctrld: '\\x04'
   };
+  for (const [key, seq] of Object.entries(keys)) {
+    assert.ok(res.body.includes(`data-key="${key}"`), `缺少 ${key} 按键按钮`);
+    assert.ok(res.body.includes(`${key}: '${seq}'`), `${key} 的转义序列不是 ${seq}`);
+  }
+});
 
-  http.get('http://localhost:3000/nonexistent.html', (res) => {
-    assert.strictEqual(res.statusCode, 404);
-    cleanup();
-  }).on('error', cleanup);
+test('HTTP server serves static pages with content type', async () => {
+  const res = await get('/tunnel-test.html');
+  assert.strictEqual(res.statusCode, 200);
+  assert.ok(res.headers['content-type'].startsWith('text/html'));
+});
+
+test('HTTP server returns 404 for missing files', async () => {
+  const res = await get('/nonexistent.html');
+  assert.strictEqual(res.statusCode, 404);
+});
+
+test('path traversal is blocked', async () => {
+  const attempts = ['/../server.js', '/..%2Fserver.js', '/%2e%2e/%2e%2e/package.json'];
+  for (const p of attempts) {
+    const res = await get(p);
+    assert.ok([400, 403, 404].includes(res.statusCode), `${p} -> unexpected ${res.statusCode}`);
+    assert.ok(!res.body.includes('require'), `${p} leaked file content`);
+  }
+});
+
+test('/api/status requires token', async () => {
+  const res = await get('/api/status');
+  assert.strictEqual(res.statusCode, 401);
+});
+
+test('/api/status rejects wrong token', async () => {
+  const res = await get('/api/status?token=wrong-token');
+  assert.strictEqual(res.statusCode, 401);
+});
+
+test('/api/status works with query token', async () => {
+  const res = await get(`/api/status?token=${TOKEN}`);
+  assert.strictEqual(res.statusCode, 200);
+  const body = JSON.parse(res.body);
+  assert.strictEqual(body.ok, true);
+  assert.ok(body.pid > 0);
+  assert.strictEqual(body.tunnel.enabled, false);
+  assert.ok(typeof body.version === 'string' && body.version.length > 0);
+});
+
+test('/api/status works with Authorization header', async () => {
+  const res = await get('/api/status', { Authorization: `Bearer ${TOKEN}` });
+  assert.strictEqual(res.statusCode, 200);
+  assert.strictEqual(JSON.parse(res.body).ok, true);
+});
+
+test('unknown /api route with token returns 404 json', async () => {
+  const res = await get(`/api/nonexistent?token=${TOKEN}`);
+  assert.strictEqual(res.statusCode, 404);
+  assert.strictEqual(JSON.parse(res.body).error, 'not_found');
 });

@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+      dark-saas 主题：画布 #010102、表面 #0F1011/#141516、唯一强调色 #5E6AD2。
+      继承 AppCompat 而非 Material3 —— 布局里所有控件都用 AppCompat 类显式声明，
+      不依赖 Material 的 view-inflater 魔法，也就不需要 Material 主题。
+    -->
+    <style name="Theme.ClaudeLink" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/background_start</item>
+        <item name="android:statusBarColor">@color/background_start</item>
+        <item name="android:navigationBarColor">@color/background_start</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorBackgroundFloating">@color/surface_elevated</item>
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryDark">@color/background_start</item>
+        <item name="colorAccent">@color/accent</item>
+        <item name="colorControlNormal">@color/text_tertiary</item>
+        <item name="colorControlActivated">@color/accent</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_tertiary</item>
+        <item name="android:textColorHint">@color/text_hint</item>
+    </style>
+
+    <!-- 虚拟按键（对齐 web 端 .key-btn：等宽、一排 7/6 个、扁平无阴影） -->
+    <style name="KeyButton" parent="Widget.AppCompat.Button">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">44dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_margin">2dp</item>
+        <item name="android:padding">0dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:background">@drawable/bg_button_secondary</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:gravity">center</item>
+    </style>
+
+    <!-- 顶栏图标按钮（看板 / 历史地址） -->
+    <style name="IconButton" parent="Widget.AppCompat.Button">
+        <item name="android:layout_width">44dp</item>
+        <item name="android:layout_height">44dp</item>
+        <item name="android:padding">0dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:background">@drawable/bg_button_secondary</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:gravity">center</item>
+    </style>
+
+    <!-- 主按钮：primary 实底 + 白字 + 8dp 圆角 -->
+    <style name="PillButton" parent="Widget.AppCompat.Button">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">44dp</item>
+        <item name="android:minWidth">76dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:paddingStart">18dp</item>
+        <item name="android:paddingEnd">18dp</item>
+        <item name="android:paddingTop">0dp</item>
+        <item name="android:paddingBottom">0dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:background">@drawable/bg_button_primary</item>
+        <item name="android:textColor">@color/on_primary</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:gravity">center</item>
+    </style>
+
+</resources>

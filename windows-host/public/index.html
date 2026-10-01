@@ -8,11 +8,13 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>ClaudeLink Terminal</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
   <style>
     :root {
       --bg: #0d1117;
       --surface: #161b22;
       --surface-2: #21262d;
+      --bg-hover: #1c2128;
       --border: #30363d;
       --text: #f0f6fc;
       --text-dim: #8b949e;
@@ -65,7 +67,16 @@
       font-size: 12px;
       color: var(--text-dim);
       white-space: nowrap;
+      max-width: 46vw;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
+    #tunnel-pill {
+      cursor: pointer;
+      color: var(--green);
+      border-color: rgba(63, 185, 80, 0.45);
+    }
+    #tunnel-pill:hover { background: var(--bg-hover); }
     .status-indicator {
       width: 8px;
       height: 8px;
@@ -94,6 +105,41 @@
     .btn:disabled { opacity: 0.35; cursor: not-allowed; }
     .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .btn-icon { padding: 5px 9px; }
+    /* ── 终端列：快捷命令栏 + 终端 ── */
+    #term-col {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    /* 快捷命令栏 */
+    #quickcmd-bar {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      overflow-x: auto;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      scrollbar-width: none;
+    }
+    #quickcmd-bar::-webkit-scrollbar { display: none; }
+    .quickcmd-chip {
+      flex: 0 0 auto;
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 4px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+      white-space: nowrap;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .quickcmd-chip:hover { background: var(--bg-hover); border-color: var(--accent); }
+    .quickcmd-edit { color: var(--accent); margin-left: auto; }
     .btn-primary {
       background: linear-gradient(180deg, #1f6feb, #1a5fd0);
       border-color: rgba(88, 166, 255, 0.4);
@@ -171,12 +217,15 @@
       border-left: 3px solid var(--accent);
       border-radius: 8px;
       padding: 10px 12px;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
       animation: slideIn 0.25s ease;
+      cursor: pointer;
     }
+    #claude-status:hover { border-color: var(--accent); }
     #claude-status.inactive {
       border-left-color: var(--border);
       opacity: 0.6;
+      cursor: default;
     }
     .claude-status-header {
       display: flex;
@@ -192,7 +241,10 @@
       border-radius: 50%;
       background: var(--accent);
       box-shadow: 0 0 8px var(--accent);
+      flex-shrink: 0;
     }
+    .claude-status-icon.idle { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .claude-status-icon.busy { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
     #claude-status.inactive .claude-status-icon {
       background: var(--text-dim);
       box-shadow: none;
@@ -206,11 +258,44 @@
       display: flex;
       justify-content: space-between;
       margin-top: 3px;
+      gap: 8px;
     }
-    .claude-status-label { opacity: 0.7; }
+    .claude-status-label { opacity: 0.7; flex-shrink: 0; }
     .claude-status-value {
       font-family: "JetBrains Mono", Consolas, monospace;
       color: var(--text);
+      word-break: break-all;
+      text-align: right;
+    }
+
+    /* 会话列表卡片 */
+    .session-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+      animation: slideIn 0.25s ease;
+    }
+    .session-card:hover { border-color: var(--accent); }
+    .session-card.primary { border-left-color: var(--accent); }
+    .session-card .s-name {
+      font-size: 12.5px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .session-card .s-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10.5px;
+      color: var(--text-dim);
+      margin-top: 2px;
+      font-family: "JetBrains Mono", Consolas, monospace;
     }
 
     .task-card {
@@ -258,6 +343,7 @@
     #terminal-wrapper {
       flex: 1;
       min-width: 0;
+      min-height: 0;
       background: #000;
       padding: 8px;
       display: flex;
@@ -268,6 +354,44 @@
     .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
     .xterm-viewport::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 5px; }
     .xterm-viewport::-webkit-scrollbar-thumb:hover { background: var(--border); }
+
+    /* ── 移动端命令栏 ── */
+    #command-bar {
+      display: none;
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 25;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 8px 10px;
+      gap: 8px;
+    }
+    #command-input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font: 14px/1.4 "JetBrains Mono", Consolas, monospace;
+      padding: 9px 12px;
+      outline: none;
+      min-width: 0;
+    }
+    #command-input:focus { border-color: var(--accent); }
+    #command-send {
+      background: var(--accent);
+      color: #04121f;
+      font-weight: 700;
+      border: none;
+      border-radius: 8px;
+      padding: 0 18px;
+      font-size: 14px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    #command-send:disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* ── 移动端遮罩 ── */
     #backdrop {
@@ -280,227 +404,83 @@
       transition: opacity 0.25s;
     }
 
-    /* ── 错误提示 ── */
-    .error-toast {
+    /* ── 通知 ── */
+    #toast-container {
       position: fixed;
       top: 64px;
       right: 16px;
-      background: var(--red);
-      color: #fff;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-width: min(90vw, 380px);
+    }
+    .toast {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      color: var(--text);
       padding: 10px 16px;
       border-radius: 8px;
       font-size: 13px;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-      display: none;
-      z-index: 100;
+      animation: toastIn 0.25s ease;
+      word-break: break-all;
     }
-    .error-toast.show { display: block; animation: toastIn 0.25s ease; }
+    .toast.error { border-left-color: var(--red); }
+    .toast.success { border-left-color: var(--green); }
     @keyframes toastIn { from { opacity: 0; transform: translateY(-8px); } }
 
-    /* ── 移动端 ── */
-    @media (max-width: 900px) {
-      #task-board {
-        position: fixed;
-        left: 0;
-        top: 0;
-        bottom: 0;
-        z-index: 40;
-        transform: translateX(-100%);
-        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        box-shadow: 8px 0 32px rgba(0, 0, 0, 0.5);
-      }
-      #task-board.collapsed { margin-left: 0; }
-      #task-board.open { transform: translateX(0); }
-      #backdrop.show { display: block; opacity: 1; }
-      .btn { min-height: 38px; }
-      #status-bar { gap: 8px; padding: 8px 10px; }
-    }
-
-    /* 会话详情面板 */
-    .panel-overlay {
+    /* ── 模态框 ── */
+    .modal-overlay {
       position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(5, 7, 12, 0.7);
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
       opacity: 0;
       visibility: hidden;
-      transition: opacity 300ms, visibility 300ms;
-      z-index: 999;
-    }
-    .panel-overlay.show {
-      opacity: 1;
-      visibility: visible;
-    }
-    .session-detail-panel {
-      position: fixed;
-      top: 0;
-      right: 0;
-      width: min(600px, 90vw);
-      height: 100%;
-      background: var(--bg);
-      border-left: 1px solid var(--border);
-      transform: translateX(100%);
-      transition: transform 300ms cubic-bezier(0.4, 0, 0.2, 1);
-      z-index: 1000;
-      display: flex;
-      flex-direction: column;
-    }
-    .session-detail-panel.open {
-      transform: translateX(0);
-    }
-    .panel-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-hover);
-    }
-    .panel-header h2 {
-      margin: 0;
-      font-size: 18px;
-      font-weight: 600;
-      color: var(--text);
-    }
-    .close-btn {
-      background: none;
-      border: none;
-      color: var(--text-dim);
-      font-size: 28px;
-      line-height: 1;
-      cursor: pointer;
-      padding: 0;
-      width: 32px;
-      height: 32px;
-      border-radius: 6px;
+      transition: all 0.3s ease;
+      z-index: 150;
       display: flex;
       align-items: center;
       justify-content: center;
-    }
-    .close-btn:hover {
-      background: var(--border);
-      color: var(--text);
-    }
-    .panel-content {
-      flex: 1;
-      overflow-y: auto;
       padding: 16px;
     }
-    .session-info-card {
-      background: var(--bg-hover);
+    .modal-overlay.show { opacity: 1; visibility: visible; }
+    .modal-box {
+      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 16px;
-      margin-bottom: 20px;
+      padding: 20px;
+      width: min(420px, 92vw);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
     }
-    .session-info-card .status-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-    .session-info-card .project-name {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--text);
-    }
-    .session-info-card .meta-row {
-      font-size: 13px;
-      color: var(--text-dim);
-      margin-top: 4px;
-    }
-    .tasks-section {
-      margin-bottom: 20px;
-    }
-    .tasks-section h3 {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--text-dim);
-      margin: 0 0 12px 0;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .detail-tabs {
-      display: flex;
-      gap: 4px;
-      padding: 0 16px;
-      border-bottom: 1px solid var(--border);
+    .modal-box h3 { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+    .modal-box p { font-size: 12.5px; color: var(--text-dim); margin-bottom: 12px; }
+    .modal-input {
+      width: 100%;
       background: var(--bg);
-      position: sticky;
-      bottom: 0;
-    }
-    .tab-btn {
-      background: none;
-      border: none;
-      color: var(--text-dim);
-      padding: 12px 16px;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 500;
-      border-bottom: 2px solid transparent;
-      transition: all 150ms;
-    }
-    .tab-btn:hover {
-      color: var(--text);
-    }
-    .tab-btn.active {
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-    }
-    .tab-content {
-      padding: 16px;
-      min-height: 300px;
-    }
-    .tab-pane {
-      display: none;
-    }
-    .tab-pane.active {
-      display: block;
-    }
-    #detail-terminal {
-      height: 400px;
       border: 1px solid var(--border);
       border-radius: 8px;
-      overflow: hidden;
+      color: var(--text);
+      font: 14px/1.4 "JetBrains Mono", Consolas, monospace;
+      padding: 9px 12px;
+      outline: none;
+      margin-bottom: 12px;
     }
-    .history-list, .summary-content {
-      font-size: 14px;
-      line-height: 1.6;
-    }
-    .history-item {
-      padding: 12px;
-      background: var(--bg-hover);
+    .modal-input:focus { border-color: var(--accent); }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    #qr-image { display: flex; justify-content: center; margin: 6px 0 12px; }
+    #qr-image img, #qr-image svg { image-rendering: pixelated; background: #fff; padding: 8px; border-radius: 8px; }
+    #qr-url {
+      font: 12px/1.5 "JetBrains Mono", Consolas, monospace;
+      color: var(--text-dim);
+      word-break: break-all;
+      background: var(--bg);
+      border: 1px solid var(--border);
       border-radius: 8px;
-      margin-bottom: 8px;
-      border-left: 3px solid var(--accent);
-    }
-    .history-item .timestamp {
-      font-size: 12px;
-      color: var(--text-dim);
-      margin-bottom: 4px;
-    }
-    .history-item .command {
-      font-family: 'SF Mono', Consolas, monospace;
-      color: var(--text);
-    }
-    .summary-section {
-      margin-bottom: 20px;
-    }
-    .summary-section h4 {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--text);
-      margin: 0 0 8px 0;
-    }
-    .summary-section ul {
-      margin: 0;
-      padding-left: 20px;
-      color: var(--text-dim);
-    }
-    .summary-section li {
-      margin-bottom: 4px;
+      padding: 8px 10px;
+      margin-bottom: 12px;
     }
 
     /* ── 会话详情面板 ── */
@@ -517,10 +497,7 @@
       transition: all 0.3s ease;
       z-index: 100;
     }
-    .panel-overlay.show {
-      opacity: 1;
-      visibility: visible;
-    }
+    .panel-overlay.show { opacity: 1; visibility: visible; }
 
     .session-detail-panel {
       position: fixed;
@@ -537,9 +514,7 @@
       flex-direction: column;
       overflow: hidden;
     }
-    .session-detail-panel.open {
-      right: 0;
-    }
+    .session-detail-panel.open { right: 0; }
 
     .panel-header {
       display: flex;
@@ -553,6 +528,9 @@
       font-size: 16px;
       font-weight: 600;
       color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .close-btn {
       background: none;
@@ -568,11 +546,9 @@
       justify-content: center;
       border-radius: 6px;
       transition: all 0.2s;
+      flex-shrink: 0;
     }
-    .close-btn:hover {
-      background: var(--surface-2);
-      color: var(--text);
-    }
+    .close-btn:hover { background: var(--surface-2); color: var(--text); }
 
     .panel-content {
       flex: 1;
@@ -602,11 +578,11 @@
       font-size: 12px;
       color: var(--text-dim);
       margin-top: 4px;
+      font-family: "JetBrains Mono", Consolas, monospace;
+      word-break: break-all;
     }
 
-    .tasks-section {
-      margin-bottom: 20px;
-    }
+    .tasks-section { margin-bottom: 20px; }
     .tasks-section h3 {
       font-size: 14px;
       font-weight: 600;
@@ -614,45 +590,6 @@
       margin-bottom: 10px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-    }
-
-    .task-card {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 8px;
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-    }
-    .task-card.done {
-      opacity: 0.7;
-    }
-    .task-spinner {
-      width: 16px;
-      height: 16px;
-      border: 2px solid var(--border);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      flex-shrink: 0;
-      margin-top: 2px;
-    }
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-    .task-text {
-      flex: 1;
-      font-family: 'SF Mono', Consolas, monospace;
-      font-size: 13px;
-      color: var(--text);
-      word-break: break-all;
-    }
-    .task-meta {
-      font-size: 11px;
-      color: var(--text-dim);
-      margin-top: 4px;
     }
 
     .detail-tabs {
@@ -673,13 +610,10 @@
       cursor: pointer;
       position: relative;
       transition: color 0.2s;
+      font-family: inherit;
     }
-    .tab-btn:hover {
-      color: var(--text);
-    }
-    .tab-btn.active {
-      color: var(--accent);
-    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--accent); }
     .tab-btn.active::after {
       content: '';
       position: absolute;
@@ -695,19 +629,76 @@
       overflow-y: auto;
       padding: 16px 20px;
     }
-    .tab-pane {
-      display: none;
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; height: 100%; }
+    #detail-terminal {
+      height: 100%;
+      min-height: 300px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #0A0D12;
     }
-    .tab-pane.active {
-      display: block;
-    }
+    #detail-terminal .xterm { height: 100%; padding: 4px; }
 
+    .history-list, .summary-content { font-size: 13px; line-height: 1.6; }
+    .history-item {
+      padding: 10px 12px;
+      background: var(--bg);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      border-left: 3px solid var(--accent);
+    }
+    .history-item .timestamp {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+    .history-item .command {
+      font-family: 'SF Mono', Consolas, monospace;
+      color: var(--text);
+      word-break: break-all;
+    }
+    .summary-section { margin-bottom: 20px; }
+    .summary-section h4 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      margin: 0 0 8px 0;
+    }
+    .summary-section ul {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--text-dim);
+      word-break: break-all;
+    }
+    .summary-section li { margin-bottom: 4px; }
+    .dim-text { color: var(--text-dim); }
+
+    /* ── 移动端 ── */
     @media (max-width: 900px) {
+      #task-board {
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        z-index: 40;
+        transform: translateX(-100%);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 8px 0 32px rgba(0, 0, 0, 0.5);
+      }
+      #task-board.collapsed { margin-left: 0; }
+      #task-board.open { transform: translateX(0); }
+      #backdrop.show { display: block; opacity: 1; }
+      .btn { min-height: 38px; }
+      #status-bar { gap: 8px; padding: 8px 10px; }
       .session-detail-panel {
         width: 100vw;
         max-width: 100vw;
         right: -100vw;
       }
+      #command-bar { display: flex; }
+      #terminal-wrapper { padding-bottom: 56px; }
     }
   </style>
 </head>
@@ -720,7 +711,21 @@
       <span id="status-text">已断开</span>
     </div>
     <span class="pill" id="client-count">0 客户端</span>
+    <span class="pill" id="tunnel-pill" style="display:none;" title="点击打开公网地址">📡 隧道</span>
     <div class="spacer"></div>
+    <button id="qr-btn" class="btn btn-icon" title="隧道二维码" style="display:none;">🔳</button>
+    <button id="token-btn" class="btn btn-icon" title="设置访问令牌">🔑</button>
+    <button id="font-down" class="btn btn-icon" title="缩小字号 (Ctrl+-)">A−</button>
+    <button id="font-up" class="btn btn-icon" title="放大字号 (Ctrl+=)">A＋</button>
+    <button class="btn btn-icon key-btn" data-key="esc" title="Esc 键" aria-label="Esc 键">Esc</button>
+    <button class="btn btn-icon key-btn" data-key="tab" title="Tab 键" aria-label="Tab 键">⇥</button>
+    <button class="btn btn-icon key-btn" data-key="left" title="左方向键" aria-label="左方向键">←</button>
+    <button class="btn btn-icon key-btn" data-key="up" title="上方向键" aria-label="上方向键">↑</button>
+    <button class="btn btn-icon key-btn" data-key="down" title="下方向键" aria-label="下方向键">↓</button>
+    <button class="btn btn-icon key-btn" data-key="right" title="右方向键" aria-label="右方向键">→</button>
+    <button class="btn btn-icon key-btn" data-key="enter" title="回车 / 确认 (Enter)" aria-label="回车 / 确认">⏎</button>
+    <button class="btn btn-icon key-btn" data-key="ctrlc" title="Ctrl+C 中断" aria-label="Ctrl+C 中断">^C</button>
+    <button class="btn btn-icon key-btn" data-key="ctrld" title="Ctrl+D 退出" aria-label="Ctrl+D 退出">^D</button>
     <button id="clear-btn" class="btn" disabled>清屏</button>
     <button id="restart-btn" class="btn" disabled>重启</button>
     <button id="connect-btn" class="btn btn-primary">连接</button>
@@ -741,6 +746,7 @@
               <span>未检测到活动会话</span>
             </div>
           </div>
+          <div id="session-list"></div>
         </div>
         <div class="task-section">
           <div class="task-section-title">进行中</div>
@@ -752,19 +758,68 @@
         </div>
       </div>
     </aside>
-    <div id="terminal-wrapper">
-      <div id="terminal-container"></div>
+    <div id="term-col">
+      <div id="quickcmd-bar"></div>
+      <div id="terminal-wrapper">
+        <div id="terminal-container"></div>
+      </div>
     </div>
   </div>
 
+  <!-- 移动端命令栏 -->
+  <div id="command-bar">
+    <input id="command-input" type="text" placeholder="输入命令…" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send">
+    <button id="command-send">发送</button>
+  </div>
+
   <div id="backdrop"></div>
-  <div class="error-toast" id="error-toast"></div>
+  <div id="toast-container"></div>
+
+  <!-- 令牌设置弹窗 -->
+  <div class="modal-overlay" id="token-modal" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3>🔑 访问令牌</h3>
+      <p>此服务器已启用访问令牌保护。请输入服务器启动日志中显示的令牌（或 ACCESS_TOKEN 环境变量）。令牌保存在本机浏览器中。</p>
+      <input class="modal-input" id="token-input" type="text" placeholder="粘贴访问令牌…" autocomplete="off">
+      <div class="modal-actions">
+        <button class="btn" id="token-cancel">取消</button>
+        <button class="btn btn-primary" id="token-save">保存并连接</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 快捷命令编辑弹窗 -->
+  <div class="modal-overlay" id="quickcmd-modal" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3>⚡ 快捷命令</h3>
+      <p>每行一条命令，保存后显示为终端上方的快捷按钮。</p>
+      <textarea class="modal-input" id="quickcmd-input" rows="6" placeholder="/resume&#10;/clear&#10;git status"></textarea>
+      <div class="modal-actions">
+        <button class="btn" id="quickcmd-cancel">取消</button>
+        <button class="btn btn-primary" id="quickcmd-save">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 隧道二维码弹窗 -->
+  <div class="modal-overlay" id="qr-modal" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3>📡 移动端访问二维码</h3>
+      <p>用手机扫码即可访问（URL 已包含令牌）。</p>
+      <div id="qr-image"></div>
+      <div id="qr-url"></div>
+      <div class="modal-actions">
+        <button class="btn" id="qr-copy">复制链接</button>
+        <button class="btn btn-primary" id="qr-close">关闭</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 会话详情面板 -->
   <div class="panel-overlay" id="panel-overlay"></div>
   <div class="session-detail-panel" id="session-detail-panel">
     <div class="panel-header">
-      <h2>Claude Code 会话详情</h2>
+      <h2 id="panel-title">Claude Code 会话详情</h2>
       <button class="close-btn" id="close-panel-btn">&times;</button>
     </div>
     <div class="panel-content">
@@ -795,7 +850,7 @@
     <div class="tab-content">
       <div class="tab-pane active" id="tab-overview">
         <div class="summary-content" id="session-summary">
-          <p style="color: var(--text-dim);">等待会话数据...</p>
+          <p class="dim-text">等待会话数据...</p>
         </div>
       </div>
       <div class="tab-pane" id="tab-history">
@@ -814,18 +869,60 @@
     const $ = (id) => document.getElementById(id);
     const connectBtn = $('connect-btn'), clearBtn = $('clear-btn'), restartBtn = $('restart-btn');
     const statusText = $('status-text'), statusIndicator = $('status-indicator'), clientCount = $('client-count');
-    const errorToast = $('error-toast'), board = $('task-board'), backdrop = $('backdrop');
+    const toastContainer = $('toast-container'), board = $('task-board'), backdrop = $('backdrop');
     const taskCount = $('task-count'), activeList = $('active-tasks'), historyList = $('task-history');
 
     let ws = null, term = null, fitAddon = null;
     let inputBuffer = '', inputTimer = null;
+    let manualClose = false;      // 用户主动断开时不自动重连
+    let reconnectAttempts = 0;
+    let reconnectTimer = null;
+    let outLog = '';              // 终端输出滚动日志（供详情面板实时回放）
+    const OUT_LOG_MAX = 200000;
+    let authEnabled = true;       // 服务端令牌认证开关（history 消息下发）
+    let fontScale = parseInt(localStorage.getItem('claudelink_fontsize') || '0', 10) || 0;  // 0=自适应
+    function targetFontSize() {
+      return fontScale || (window.innerWidth < 768 ? 12 : 14);
+    }
+
+    /* ── 令牌管理 ── */
+    const TOKEN_KEY = 'claudelink_token';
+
+    function getToken() {
+      return localStorage.getItem(TOKEN_KEY) || '';
+    }
+    function setToken(token) {
+      localStorage.setItem(TOKEN_KEY, token.trim());
+    }
+    (function initTokenFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const urlToken = params.get('token');
+      if (urlToken) {
+        setToken(urlToken);
+        params.delete('token');
+        const qs = params.toString();
+        window.history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+      }
+    })();
+
+    /* ── 通知 ── */
+    function showToast(message, type = 'info', ms = 3500) {
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.textContent = message;  // textContent 防 XSS
+      toastContainer.appendChild(toast);
+      setTimeout(() => toast.remove(), ms);
+    }
+    function showError(message) {
+      showToast(message, 'error', 4000);
+    }
 
     /* ── 任务看板（纯客户端：输入即任务，输出静默即完成） ── */
     const taskBoard = {
       tasks: [],
       nextId: 1,
       idleTimer: null,
-      IDLE_MS: 2500,      // ponytail: 输出静默判定完成的阈值，误报只影响看板状态
+      IDLE_MS: 2500,      // 输出静默判定完成的阈值，误报只影响看板状态
       MAX_DONE: 20,
 
       add(text) {
@@ -850,7 +947,7 @@
           const drop = new Set(done.slice(this.MAX_DONE).map(t => t.id));
           this.tasks = this.tasks.filter(t => !drop.has(t.id));
         }
-        if (changed) { this.render(); updateIndicator(); }
+        if (changed) { this.render(); updateIndicator(); saveTasks(); }
       },
       render() {
         const running = this.tasks.filter(t => t.status === 'running');
@@ -894,6 +991,25 @@
       }
     };
 
+    // 任务历史持久化（localStorage）
+    const TASKS_KEY = 'claudelink_tasks';
+    function saveTasks() {
+      try {
+        const done = taskBoard.tasks.filter(t => t.status === 'done').slice(0, taskBoard.MAX_DONE);
+        localStorage.setItem(TASKS_KEY, JSON.stringify(done));
+      } catch (e) {}
+    }
+    (function loadTasks() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(TASKS_KEY) || '[]');
+        if (Array.isArray(saved) && saved.length) {
+          taskBoard.tasks = saved.map(t => ({ id: t.id, text: t.text, status: 'done', start: t.start, end: t.end }));
+          taskBoard.nextId = taskBoard.tasks.reduce((m, t) => Math.max(m, t.id), 0) + 1;
+          taskBoard.render();
+        }
+      } catch (e) {}
+    })();
+
     // 进行中的任务每秒刷新一次耗时
     setInterval(() => {
       if (taskBoard.tasks.some(t => t.status === 'running')) taskBoard.render();
@@ -912,7 +1028,7 @@
         cursorBlink: true,
         cursorStyle: 'block',
         fontFamily: '"JetBrains Mono", "Consolas", "Courier New", monospace',
-        fontSize: window.innerWidth < 768 ? 12 : 14,
+        fontSize: targetFontSize(),
         theme: {
           background: '#000000',
           foreground: '#f0f6fc',
@@ -952,7 +1068,7 @@
         if (ws?.readyState !== WebSocket.OPEN) return;
         inputBuffer += data;
 
-        // ponytail: 方向键/历史召回的命令不追踪（需解析输出，代价不值）
+        // 方向键/历史召回的命令不追踪（需解析输出，代价不值）
         for (const ch of data) {
           if (inEsc) { if (/[a-zA-Z~]/.test(ch)) inEsc = false; continue; }
           if (ch === '\x1B') { inEsc = true; draft = ''; continue; }
@@ -987,12 +1103,13 @@
 
     function fitAndSync() {
       if (!fitAddon) return;
-      const targetSize = window.innerWidth < 768 ? 12 : 14;
+      const targetSize = targetFontSize();
       if (term.options.fontSize !== targetSize) term.options.fontSize = targetSize;
       fitAddon.fit();
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       }
+      if (detailTerminalFit) detailTerminalFit();
     }
 
     function sendInputBuffer() {
@@ -1003,25 +1120,144 @@
       inputTimer = null;
     }
 
-    /* ── WebSocket ── */
-    connectBtn.onclick = () => {
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.close();
-        return;
+    /* ── 移动端命令栏（IME 安全） ── */
+    const commandInput = $('command-input');
+    const commandSend = $('command-send');
+    let composing = false;
+
+    commandInput.addEventListener('compositionstart', () => { composing = true; });
+    commandInput.addEventListener('compositionend', () => { composing = false; });
+    commandInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !composing) {
+        e.preventDefault();
+        sendCommand();
       }
+    });
+    commandSend.onclick = sendCommand;
+
+    function sendCommand() {
+      const text = commandInput.value.trim();
+      if (!text) return;
+      runCommand(text);
+      commandInput.value = '';
+    }
+
+    /* ── 快捷命令栏 ── */
+    const QUICKCMD_KEY = 'claudelink_quickcmds';
+    const DEFAULT_QUICKCMDS = ['/resume', '/clear', 'git status', 'npm test'];
+    const quickCmdBar = $('quickcmd-bar');
+
+    function runCommand(text) {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'input', data: text + '\r' }));
+        taskBoard.add(text.slice(0, 80));
+      } else {
+        showError('未连接服务器');
+      }
+    }
+    function getQuickCmds() {
+      try {
+        const arr = JSON.parse(localStorage.getItem(QUICKCMD_KEY));
+        if (Array.isArray(arr) && arr.length) return arr.map(s => String(s).trim()).filter(Boolean);
+      } catch (e) {}
+      return DEFAULT_QUICKCMDS.slice();
+    }
+    function renderQuickCmds() {
+      quickCmdBar.textContent = '';
+      const cmds = getQuickCmds();
+      if (!cmds.length) { quickCmdBar.style.display = 'none'; return; }
+      quickCmdBar.style.display = '';
+      for (const c of cmds) {
+        const chip = document.createElement('button');
+        chip.className = 'quickcmd-chip';
+        chip.textContent = c;
+        chip.onclick = () => runCommand(c);
+        quickCmdBar.appendChild(chip);
+      }
+      const edit = document.createElement('button');
+      edit.className = 'quickcmd-chip quickcmd-edit';
+      edit.textContent = '＋';
+      edit.title = '编辑快捷命令';
+      edit.onclick = openQuickCmdModal;
+      quickCmdBar.appendChild(edit);
+    }
+    function openQuickCmdModal() {
+      $('quickcmd-input').value = getQuickCmds().join('\n');
+      $('quickcmd-modal').classList.add('show');
+      setTimeout(() => $('quickcmd-input').focus(), 50);
+    }
+    $('quickcmd-cancel').onclick = () => $('quickcmd-modal').classList.remove('show');
+    $('quickcmd-modal').addEventListener('click', (e) => {
+      if (e.target === $('quickcmd-modal')) $('quickcmd-modal').classList.remove('show');
+    });
+    $('quickcmd-save').onclick = () => {
+      const cmds = $('quickcmd-input').value.split('\n').map(s => s.trim()).filter(Boolean);
+      localStorage.setItem(QUICKCMD_KEY, JSON.stringify(cmds));
+      $('quickcmd-modal').classList.remove('show');
+      renderQuickCmds();
+      showToast('快捷命令已保存', 'success');
+    };
+    renderQuickCmds();
+
+    /* ── 终端字号缩放 ── */
+    function zoomFont(delta) {
+      fontScale = Math.min(28, Math.max(8, targetFontSize() + delta));
+      localStorage.setItem('claudelink_fontsize', String(fontScale));
+      if (term) term.options.fontSize = fontScale;
+      fitAndSync();
+    }
+    function resetFont() {
+      fontScale = 0;
+      localStorage.removeItem('claudelink_fontsize');
+      if (term) term.options.fontSize = targetFontSize();
+      fitAndSync();
+    }
+    $('font-down').onclick = () => zoomFont(-1);
+    $('font-up').onclick = () => zoomFont(1);
+    window.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key === '=' || e.key === '+') { e.preventDefault(); zoomFont(1); }
+      else if (e.key === '-') { e.preventDefault(); zoomFont(-1); }
+      else if (e.key === '0') { e.preventDefault(); resetFont(); }
+    });
+
+    /* ── 特殊按键：Tab / 方向键 ── */
+    // 与 xterm 默认按键输出一致；ponytail: 未跟随 DECCKM 应用光标模式（此时真实终端发 \x1bO[A]），
+    // 只有 TUI 显式开启该模式才需要区分，遇到再加 term.onData 之外的模式跟踪。
+    const KEY_SEQ = {
+      esc: '\x1b', tab: '\t',
+      left: '\x1b[D', up: '\x1b[A', down: '\x1b[B', right: '\x1b[C',
+      enter: '\r',
+      ctrlc: '\x03', ctrld: '\x04'
+    };
+    function sendKey(seq) {
+      if (ws?.readyState !== WebSocket.OPEN) { showError('未连接服务器'); return; }
+      ws.send(JSON.stringify({ type: 'input', data: seq }));
+    }
+    document.querySelectorAll('.key-btn').forEach(b => {
+      b.onclick = () => sendKey(KEY_SEQ[b.dataset.key]);
+    });
+
+    /* ── WebSocket（自动重连） ── */
+    function connect() {
+      if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 
       if (!term) initTerminal();
 
-      const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+      const token = getToken();
+      const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/?token=${encodeURIComponent(token)}`;
       ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
+        reconnectAttempts = 0;
         statusText.textContent = '已连接';
         connectBtn.textContent = '断开';
         connectBtn.classList.add('connected');
         clearBtn.disabled = false;
         restartBtn.disabled = false;
         updateIndicator();
+        showToast('已连接服务器', 'success', 2000);
       };
 
       ws.onmessage = (e) => {
@@ -1031,10 +1267,24 @@
           if (msg.type === 'output') {
             term.write(msg.data);
             taskBoard.bumpActivity();
+            appendOutLog(msg.data);
+            if (sessionPanel.classList.contains('open') && detailTerminal) {
+              detailTerminal.write(msg.data);
+            }
           } else if (msg.type === 'history') {
             term.clear();
             term.write(msg.data);
-            if (msg.clientCount) clientCount.textContent = `${msg.clientCount} 客户端`;
+            outLog = msg.data;
+            if (detailTerminal) {
+              detailTerminal.clear();
+              detailTerminal.write(outLog);
+            }
+            if (msg.clientCount != null) clientCount.textContent = `${msg.clientCount} 客户端`;
+            if (msg.tunnel) updateTunnel(msg.tunnel);
+            if (msg.authEnabled === false) {
+              authEnabled = false;
+              $('token-btn').style.display = 'none';
+            }
           } else if (msg.type === 'client_count') {
             clientCount.textContent = `${msg.count} 客户端`;
           } else if (msg.type === 'error') {
@@ -1046,15 +1296,23 @@
           } else if (msg.type === 'pty_exited') {
             taskBoard.finish();
             term.write(`\r\n[PTY 已退出，退出码 ${msg.exitCode}]\r\n`);
+            showToast(`Claude 进程已退出（代码 ${msg.exitCode}），输入任意命令或点击重启`, 'error', 5000);
           } else if (msg.type === 'claude_status') {
             updateClaudeStatus(msg);
+            if (sessionPanel.classList.contains('open') && window.panelSession) {
+              // 面板打开时同步刷新对应会话的数据
+              refreshOpenPanel(msg);
+            }
+          } else if (msg.type === 'tunnel') {
+            updateTunnel(msg);
           }
         } catch (err) {
           term.write(e.data);
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (e) => {
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
         statusText.textContent = '已断开';
         connectBtn.textContent = '连接';
         connectBtn.classList.remove('connected');
@@ -1062,62 +1320,273 @@
         restartBtn.disabled = true;
         taskBoard.finish();
         updateIndicator();
+
+        if (e.code === 4401) {
+          // 未授权：提示输入令牌
+          showError('访问令牌无效，请重新输入');
+          openTokenModal();
+          return;
+        }
+
+        if (!manualClose) {
+          const delay = Math.min(15000, 1000 * Math.pow(2, reconnectAttempts));
+          reconnectAttempts += 1;
+          statusText.textContent = `${Math.round(delay / 1000)}s 后重连`;
+          showToast(`连接已断开，${Math.round(delay / 1000)} 秒后自动重连…`, 'error', delay + 500);
+          reconnectTimer = setTimeout(connect, delay);
+        }
       };
 
       ws.onerror = () => {
         statusText.textContent = '连接失败';
-        showError('WebSocket 连接失败');
       };
+    }
+
+    connectBtn.onclick = () => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        manualClose = true;
+        ws.close();
+        return;
+      }
+      manualClose = false;
+      connect();
     };
 
-    function showError(msg) {
-      errorToast.textContent = msg;
-      errorToast.classList.add('show');
-      setTimeout(() => errorToast.classList.remove('show'), 3000);
+    function appendOutLog(data) {
+      outLog += data;
+      if (outLog.length > OUT_LOG_MAX) {
+        outLog = outLog.slice(-OUT_LOG_MAX);
+      }
+    }
+
+    /* ── 隧道状态 ── */
+    let tunnelUrl = null;
+
+    function updateTunnel(msg) {
+      const enabled = Boolean(msg && msg.enabled);
+      const url = (msg && msg.url) || null;
+      tunnelUrl = url;
+      const pill = $('tunnel-pill');
+      const qrBtn = $('qr-btn');
+
+      if (enabled && url) {
+        let host = url;
+        try { host = new URL(url).host; } catch (e) {}
+        pill.textContent = '📡 ' + host;
+        pill.style.display = '';
+        qrBtn.style.display = '';
+      } else if (enabled) {
+        pill.textContent = '📡 隧道连接中…';
+        pill.style.display = '';
+        qrBtn.style.display = 'none';
+      } else {
+        pill.style.display = 'none';
+        qrBtn.style.display = 'none';
+      }
+    }
+
+    $('tunnel-pill').onclick = () => {
+      if (tunnelUrl) {
+        const url = tunnelUrl + (authEnabled ? '/?token=' + encodeURIComponent(getToken()) : '');
+        window.open(url, '_blank');
+      }
+    };
+
+    /* ── 二维码弹窗 ── */
+    function openQrModal() {
+      if (!tunnelUrl) {
+        showError('隧道尚未就绪');
+        return;
+      }
+      const url = tunnelUrl + (authEnabled ? '/?token=' + encodeURIComponent(getToken()) : '');
+      $('qr-url').textContent = url;
+      const container = $('qr-image');
+      container.textContent = '';
+
+      if (typeof window.qrcode !== 'function') {
+        const p = document.createElement('p');
+        p.textContent = '二维码组件加载失败（qrcode CDN 不可用），请复制下方链接。';
+        container.appendChild(p);
+      } else {
+        try {
+          const qr = window.qrcode(0, 'M');
+          qr.addData(url);
+          qr.make();
+          container.appendChild(qr.createImgTag(5, 8));
+        } catch (e) {
+          const p = document.createElement('p');
+          p.textContent = '二维码生成失败：' + e.message;
+          container.appendChild(p);
+        }
+      }
+      $('qr-modal').classList.add('show');
+    }
+
+    $('qr-btn').onclick = openQrModal;
+    $('qr-close').onclick = () => $('qr-modal').classList.remove('show');
+    $('qr-copy').onclick = async () => {
+      const url = $('qr-url').textContent;
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast('链接已复制', 'success');
+      } catch (e) {
+        // 降级：选中文本
+        const range = document.createRange();
+        range.selectNodeContents($('qr-url'));
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        showToast('已选中链接，请手动复制（Ctrl+C）');
+      }
+    };
+    $('qr-modal').addEventListener('click', (e) => {
+      if (e.target === $('qr-modal')) $('qr-modal').classList.remove('show');
+    });
+
+    /* ── 令牌弹窗 ── */
+    function openTokenModal() {
+      $('token-input').value = getToken();
+      $('token-modal').classList.add('show');
+      setTimeout(() => $('token-input').focus(), 50);
+    }
+    $('token-btn').onclick = openTokenModal;
+    $('token-cancel').onclick = () => $('token-modal').classList.remove('show');
+    $('token-modal').addEventListener('click', (e) => {
+      if (e.target === $('token-modal')) $('token-modal').classList.remove('show');
+    });
+    $('token-save').onclick = () => {
+      const token = $('token-input').value.trim();
+      if (!token) {
+        showError('请输入令牌');
+        return;
+      }
+      setToken(token);
+      $('token-modal').classList.remove('show');
+      showToast('令牌已保存，正在重新连接…', 'success');
+      if (ws) {
+        manualClose = true;
+        ws.close();
+      }
+      manualClose = false;
+      reconnectAttempts = 0;
+      connect();
+    };
+
+    /* ── Claude 状态（DOM 安全渲染） ── */
+    function statusLabel(s) {
+      return s.status === 'busy' ? '运行中' : '空闲';
     }
 
     function updateClaudeStatus(msg) {
+      window.lastClaudeStatus = msg;
       const container = $('claude-status');
+
       if (!msg.active) {
         container.className = 'inactive';
-        container.innerHTML = `
-          <div class="claude-status-header">
-            <div class="claude-status-icon"></div>
-            <span>未检测到活动会话</span>
-          </div>`;
-        container.style.cursor = 'default';
+        container.textContent = '';
+        const header = document.createElement('div');
+        header.className = 'claude-status-header';
+        const icon = document.createElement('div');
+        icon.className = 'claude-status-icon';
+        const span = document.createElement('span');
+        span.textContent = '未检测到活动会话';
+        header.append(icon, span);
+        container.appendChild(header);
         container.onclick = null;
+        renderSessionList([]);
         return;
       }
 
       container.className = '';
-      const s = msg;
-      const statusText = s.status === 'busy' ? '运行中' : '空闲';
-      const projectName = s.projectName || '未命名项目';
-      container.innerHTML = `
-        <div class="claude-status-header">
-          <div class="claude-status-icon"></div>
-          <span>${projectName}</span>
-        </div>
-        <div class="claude-status-body">
-          <div class="claude-status-row">
-            <span class="claude-status-label">状态</span>
-            <span class="claude-status-value">${statusText}</span>
-          </div>
-          <div class="claude-status-row">
-            <span class="claude-status-label">PID</span>
-            <span class="claude-status-value">${s.pid}</span>
-          </div>
-          <div class="claude-status-row">
-            <span class="claude-status-label">工作目录</span>
-            <span class="claude-status-value" style="font-size: 10px; word-break: break-all;">${s.cwd}</span>
-          </div>
-        </div>`;
+      container.textContent = '';
+      const header = document.createElement('div');
+      header.className = 'claude-status-header';
+      const icon = document.createElement('div');
+      icon.className = `claude-status-icon ${msg.status === 'busy' ? 'busy' : 'idle'}`;
+      const title = document.createElement('span');
+      title.textContent = msg.projectName || '未命名项目';
+      header.append(icon, title);
+      container.appendChild(header);
 
-      container.style.cursor = 'pointer';
-      container.onclick = () => openSessionPanel(msg);
+      const body = document.createElement('div');
+      body.className = 'claude-status-body';
+      body.appendChild(statusRow('状态', statusLabel(msg)));
+      body.appendChild(statusRow('PID', String(msg.pid)));
+      body.appendChild(statusRow('工作目录', msg.cwd || '-'));
+      if (Array.isArray(msg.sessions) && msg.sessions.length > 1) {
+        body.appendChild(statusRow('会话数', String(msg.sessions.length)));
+      }
+      container.appendChild(body);
 
-      window.lastClaudeStatus = msg;
+      container.onclick = () => openSessionPanel(primarySessionPayload(msg));
+      renderSessionList(msg.sessions || []);
+    }
+
+    function statusRow(label, value) {
+      const row = document.createElement('div');
+      row.className = 'claude-status-row';
+      const l = document.createElement('span');
+      l.className = 'claude-status-label';
+      l.textContent = label;
+      const v = document.createElement('span');
+      v.className = 'claude-status-value';
+      v.textContent = value;
+      row.append(l, v);
+      return row;
+    }
+
+    // 主会话面板负载：含摘要/最近命令；其余会话只有基本信息+输入历史
+    function primarySessionPayload(msg) {
+      return {
+        ...msg,
+        sessionKey: msg.sessionId,
+        hasGlobalData: true
+      };
+    }
+
+    function sessionPayload(sessionInfo, msg) {
+      const isPrimary = msg.active && sessionInfo.sessionId === msg.sessionId;
+      return {
+        active: true,
+        status: sessionInfo.status || 'unknown',
+        cwd: sessionInfo.cwd,
+        pid: sessionInfo.pid,
+        projectName: sessionInfo.projectName,
+        sessionId: sessionInfo.sessionId,
+        startedAt: sessionInfo.startedAt,
+        updatedAt: sessionInfo.updatedAt,
+        userInputs: sessionInfo.userInputs || [],
+        summary: isPrimary ? msg.summary : null,
+        recentCommands: isPrimary ? msg.recentCommands : [],
+        hasGlobalData: isPrimary
+      };
+    }
+
+    function renderSessionList(sessions) {
+      const listEl = $('session-list');
+      listEl.textContent = '';
+      if (!Array.isArray(sessions) || sessions.length === 0) return;
+
+      for (const s of sessions) {
+        const card = document.createElement('div');
+        card.className = 'session-card';
+        const name = document.createElement('div');
+        name.className = 's-name';
+        name.textContent = s.projectName || '未命名项目';
+        const meta = document.createElement('div');
+        meta.className = 's-meta';
+        const left = document.createElement('span');
+        left.textContent = `${statusLabel(s)} · PID ${s.pid}`;
+        const right = document.createElement('span');
+        right.textContent = s.startedAt ? new Date(s.startedAt).toLocaleTimeString() : '';
+        meta.append(left, right);
+        card.append(name, meta);
+        card.onclick = () => {
+          const msg = window.lastClaudeStatus;
+          if (msg && msg.active) openSessionPanel(sessionPayload(s, msg));
+        };
+        listEl.appendChild(card);
+      }
     }
 
     /* ── 看板折叠 / 移动端抽屉 ── */
@@ -1148,9 +1617,12 @@
     const sessionPanel = $('session-detail-panel');
     const closePanelBtn = $('close-panel-btn');
     let detailTerminal = null;
+    let detailTerminalFit = null;
+    let currentTab = 'overview';
 
     function openSessionPanel(msg) {
       if (!msg || !msg.active) return;
+      window.panelSession = msg;
 
       updatePanelInfo(msg);
       updatePanelTasks();
@@ -1160,32 +1632,68 @@
       sessionPanel.classList.add('open');
 
       if (!detailTerminal) {
-        setTimeout(() => initDetailTerminal(), 100);
+        setTimeout(initDetailTerminal, 100);
+      } else {
+        detailTerminal.clear();
+        detailTerminal.write(outLog);
+        detailTerminalFit();
       }
     }
 
     function closeSessionPanel() {
       panelOverlay.classList.remove('show');
       sessionPanel.classList.remove('open');
+      window.panelSession = null;
     }
 
     closePanelBtn.onclick = closeSessionPanel;
     panelOverlay.onclick = closeSessionPanel;
 
-    function updatePanelInfo(msg) {
-      const statusText = msg.status === 'busy' ? '运行中' : '空闲';
-      const projectName = msg.projectName || '未命名项目';
-      const cwd = msg.cwd || '-';
-      const pid = msg.pid || '-';
+    function refreshOpenPanel(msg) {
+      const current = window.panelSession;
+      if (!current) return;
+      // 用最新数据重建当前会话视图（保持所选 sessionId 或主会话）
+      let next;
+      if (current.sessionId && Array.isArray(msg.sessions)) {
+        const found = msg.sessions.find(s => s.sessionId === current.sessionId);
+        if (found) next = sessionPayload(found, msg);
+      }
+      if (!next && msg.active) next = primarySessionPayload(msg);
+      if (next) {
+        window.panelSession = next;
+        updatePanelInfo(next);
+        updatePanelTabs(next);
+      } else {
+        closeSessionPanel();
+      }
+    }
 
-      $('session-info').innerHTML = `
-        <div class="status-row">
-          <div class="claude-status-icon"></div>
-          <span class="project-name">${projectName}</span>
-        </div>
-        <div class="meta-row">PID: ${pid} | ${statusText}</div>
-        <div class="meta-row" style="word-break: break-all;">${cwd}</div>
-      `;
+    function updatePanelInfo(msg) {
+      const info = $('session-info');
+      info.textContent = '';
+      const projectName = msg.projectName || '未命名项目';
+      $('panel-title').textContent = projectName;
+
+      const statusRowEl = document.createElement('div');
+      statusRowEl.className = 'status-row';
+      const icon = document.createElement('div');
+      icon.className = `claude-status-icon ${msg.status === 'busy' ? 'busy' : 'idle'}`;
+      const name = document.createElement('span');
+      name.className = 'project-name';
+      name.textContent = projectName;
+      statusRowEl.append(icon, name);
+
+      const meta1 = document.createElement('div');
+      meta1.className = 'meta-row';
+      meta1.textContent = `PID: ${msg.pid || '-'} | ${statusLabel(msg)} | 会话: ${msg.sessionId || '-'}`;
+      const meta2 = document.createElement('div');
+      meta2.className = 'meta-row';
+      meta2.textContent = msg.cwd || '-';
+      const meta3 = document.createElement('div');
+      meta3.className = 'meta-row';
+      meta3.textContent = msg.startedAt ? `启动于 ${new Date(msg.startedAt).toLocaleString()}` : '';
+
+      info.append(statusRowEl, meta1, meta2, meta3);
     }
 
     function updatePanelTasks() {
@@ -1194,80 +1702,140 @@
 
       const activeContainer = $('panel-active-tasks');
       const historyContainer = $('panel-task-history');
+      activeContainer.textContent = '';
+      historyContainer.textContent = '';
 
       if (running.length === 0) {
-        activeContainer.innerHTML = '<div class="task-empty">暂无任务</div>';
+        const empty = document.createElement('div');
+        empty.className = 'task-empty';
+        empty.textContent = '暂无任务';
+        activeContainer.appendChild(empty);
       } else {
-        activeContainer.innerHTML = running.map(t => {
-          const elapsed = Math.floor((Date.now() - t.start) / 1000);
-          return `
-            <div class="task-card">
-              <div class="task-spinner"></div>
-              <div class="task-text">${t.text}</div>
-              <div class="task-meta">执行中 · ${elapsed}s</div>
-            </div>
-          `;
-        }).join('');
+        for (const t of running) {
+          const card = document.createElement('div');
+          card.className = 'task-card running';
+          const name = document.createElement('div');
+          name.className = 'task-name';
+          const icon = document.createElement('span');
+          icon.className = 'task-icon';
+          icon.textContent = '◌';
+          const label = document.createElement('span');
+          label.textContent = t.text;
+          name.append(icon, label);
+          const meta = document.createElement('div');
+          meta.className = 'task-meta';
+          meta.textContent = `执行中 · ${Math.floor((Date.now() - t.start) / 1000)}s`;
+          card.append(name, meta);
+          activeContainer.appendChild(card);
+        }
       }
 
       if (done.length === 0) {
-        historyContainer.innerHTML = '<div class="task-empty">暂无记录</div>';
+        const empty = document.createElement('div');
+        empty.className = 'task-empty';
+        empty.textContent = '暂无记录';
+        historyContainer.appendChild(empty);
       } else {
-        historyContainer.innerHTML = done.map(t => {
-          const elapsed = Math.floor((t.end - t.start) / 1000);
-          return `
-            <div class="task-card done">
-              <div class="task-text">${t.text}</div>
-              <div class="task-meta">已完成 · ${elapsed}s</div>
-            </div>
-          `;
-        }).join('');
+        for (const t of done) {
+          const card = document.createElement('div');
+          card.className = 'task-card done';
+          const name = document.createElement('div');
+          name.className = 'task-name';
+          const icon = document.createElement('span');
+          icon.className = 'task-icon';
+          icon.textContent = '✓';
+          const label = document.createElement('span');
+          label.textContent = t.text;
+          name.append(icon, label);
+          const meta = document.createElement('div');
+          meta.className = 'task-meta';
+          meta.textContent = `已完成 · ${Math.floor((t.end - t.start) / 1000)}s`;
+          card.append(name, meta);
+          historyContainer.appendChild(card);
+        }
       }
     }
 
     function updatePanelTabs(msg) {
+      // 概览：摘要 + 最近命令
       const summaryContent = $('session-summary');
-      const inputHistoryList = $('input-history');
+      summaryContent.textContent = '';
 
       if (msg.summary) {
         const { tasks, filesModified, toolsUsed } = msg.summary;
-        let html = '';
-
         if (tasks && tasks.length > 0) {
-          html += '<div class="summary-section"><h4>任务</h4><ul>';
-          tasks.forEach(task => html += `<li>${task}</li>`);
-          html += '</ul></div>';
+          summaryContent.appendChild(summarySection('任务', tasks));
         }
-
         if (filesModified && filesModified.length > 0) {
-          html += '<div class="summary-section"><h4>修改的文件</h4><ul>';
-          filesModified.forEach(file => html += `<li>${file}</li>`);
-          html += '</ul></div>';
+          summaryContent.appendChild(summarySection('修改的文件', filesModified));
         }
-
         if (toolsUsed && toolsUsed.length > 0) {
-          html += '<div class="summary-section"><h4>使用的工具</h4><ul>';
-          toolsUsed.forEach(tool => html += `<li>${tool}</li>`);
-          html += '</ul></div>';
+          summaryContent.appendChild(summarySection('使用的工具', toolsUsed));
         }
-
-        summaryContent.innerHTML = html || '<p style="color: var(--text-dim);">暂无摘要数据</p>';
       }
 
+      if (Array.isArray(msg.recentCommands) && msg.recentCommands.length > 0) {
+        const sec = document.createElement('div');
+        sec.className = 'summary-section';
+        const h4 = document.createElement('h4');
+        h4.textContent = '最近命令';
+        const ul = document.createElement('ul');
+        for (const cmd of msg.recentCommands) {
+          const li = document.createElement('li');
+          li.textContent = `[${cmd.timestamp}] ${cmd.command}`;
+          ul.appendChild(li);
+        }
+        sec.append(h4, ul);
+        summaryContent.appendChild(sec);
+      }
+
+      if (!summaryContent.childElementCount) {
+        const p = document.createElement('p');
+        p.className = 'dim-text';
+        p.textContent = msg.hasGlobalData ? '暂无摘要数据' : '该会话暂无摘要（摘要仅对主会话提供）';
+        summaryContent.appendChild(p);
+      }
+
+      // 输入历史
+      const inputHistoryList = $('input-history');
+      inputHistoryList.textContent = '';
       if (msg.userInputs && msg.userInputs.length > 0) {
-        inputHistoryList.innerHTML = msg.userInputs.map(input => {
-          const date = new Date(input.timestamp);
-          const timeStr = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-          return `
-            <div class="history-item">
-              <div class="timestamp">${timeStr}</div>
-              <div class="command">${input.display}</div>
-            </div>
-          `;
-        }).join('');
+        for (const input of msg.userInputs) {
+          const item = document.createElement('div');
+          item.className = 'history-item';
+          const ts = document.createElement('div');
+          ts.className = 'timestamp';
+          const date = input.timestamp ? new Date(input.timestamp) : null;
+          ts.textContent = date && !isNaN(date)
+            ? date.toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+            : '';
+          const cmd = document.createElement('div');
+          cmd.className = 'command';
+          cmd.textContent = input.display || '';
+          item.append(ts, cmd);
+          inputHistoryList.appendChild(item);
+        }
       } else {
-        inputHistoryList.innerHTML = '<p style="color: var(--text-dim);">暂无输入历史</p>';
+        const p = document.createElement('p');
+        p.className = 'dim-text';
+        p.textContent = '暂无输入历史';
+        inputHistoryList.appendChild(p);
       }
+    }
+
+    function summarySection(title, items) {
+      const sec = document.createElement('div');
+      sec.className = 'summary-section';
+      const h4 = document.createElement('h4');
+      h4.textContent = title;
+      const ul = document.createElement('ul');
+      for (const item of items) {
+        const li = document.createElement('li');
+        li.textContent = item;  // textContent 防 XSS
+        ul.appendChild(li);
+      }
+      sec.append(h4, ul);
+      return sec;
     }
 
     function initDetailTerminal() {
@@ -1281,25 +1849,22 @@
         fontSize: 13,
         fontFamily: '"Cascadia Code", "SF Mono", Consolas, monospace',
         cursorBlink: false,
-        disableStdin: true
+        disableStdin: true,
+        scrollback: 10000
       });
-
+      const fit = new FitAddon();
+      detailTerminal.loadAddon(fit);
       detailTerminal.open(container);
+      detailTerminalFit = () => { try { fit.fit(); } catch (e) {} };
 
-      if (term) {
-        const mainBuffer = term.buffer.active;
-        for (let i = 0; i < mainBuffer.length; i++) {
-          const line = mainBuffer.getLine(i);
-          if (line) {
-            detailTerminal.writeln(line.translateToString(true));
-          }
-        }
-      }
+      detailTerminal.write(outLog);  // 回放当前输出日志（实时同步起点）
+      detailTerminalFit();
     }
 
     document.querySelectorAll('.tab-btn').forEach(btn => {
       btn.onclick = () => {
         const targetTab = btn.getAttribute('data-tab');
+        currentTab = targetTab;
 
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
@@ -1308,7 +1873,7 @@
         $(`tab-${targetTab}`).classList.add('active');
 
         if (targetTab === 'terminal' && detailTerminal) {
-          detailTerminal.fit?.();
+          detailTerminalFit();
         }
       };
     });
@@ -1318,6 +1883,29 @@
         updatePanelTasks();
       }
     }, 1000);
+
+    // Esc 关闭面板/弹窗/抽屉
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      if (sessionPanel.classList.contains('open')) {
+        closeSessionPanel();
+      } else if ($('qr-modal').classList.contains('show')) {
+        $('qr-modal').classList.remove('show');
+      } else if ($('token-modal').classList.contains('show')) {
+        $('token-modal').classList.remove('show');
+      } else if (window.innerWidth <= 900 && board.classList.contains('open')) {
+        board.classList.remove('open');
+        backdrop.classList.remove('show');
+      }
+    });
+
+    // 页面加载时若已有令牌则自动连接
+    if (getToken()) {
+      connect();
+    } else {
+      statusText.textContent = '未设置令牌';
+      showToast('点击 🔑 输入访问令牌后即可连接', 'info', 6000);
+    }
   </script>
 </body>
 </html>

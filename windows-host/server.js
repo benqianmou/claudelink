@@ -2,14 +2,28 @@ require('dotenv').config();
 const pty = require('node-pty');
 const WebSocket = require('ws');
 const http = require('http');
-const fs = require('fs');
 const path = require('path');
 const ngrok = require('ngrok');
 const ClaudeSessionDetector = require('./session-detector');
+const { createAuth, isAuthorized, tokenFingerprint } = require('./lib/auth');
+const { createHttpHandler } = require('./lib/http-handler');
+const { buildPtyEnv } = require('./lib/pty-env');
 
 const PORT = process.env.PORT || 3000;
 const CLAUDE_CMD = process.env.CLAUDE_CMD || 'C:\\Users\\Lenovo\\.local\\bin\\claude.exe';
 const MAX_BUFFER_CHUNKS = 1000;
+const VERSION = require('./package.json').version;
+const HEARTBEAT_INTERVAL = 30000;   // 心跳间隔（一次未 pong 将在下个周期被终止）
+
+// PTY 数据是流式的，逐块 toString('utf8') 会把跨块的多字节字符切成两个 U+FFFD（中文输出必现），
+// 交给流式解码器自己留住半截字节
+const utf8Decoder = new TextDecoder('utf-8');
+
+let tunnelUrl = null;
+let shuttingDown = false;
+
+// 访问令牌认证：默认免认证，设置 ACCESS_TOKEN 后启用（详见 lib/auth.js）
+const auth = createAuth();
 
 // Session 管理器
 class SessionManager {
@@ -24,6 +38,8 @@ class SessionManager {
   start() {
     if (this.pty) return;
 
+    utf8Decoder.decode();   // 新 PTY：冲掉上一轮可能残留的半截多字节字符
+
     const workDir = process.env.USERPROFILE || process.env.HOME;
 
     const proc = pty.spawn(CLAUDE_CMD, [], {
@@ -31,7 +47,7 @@ class SessionManager {
       cols: 100,
       rows: 30,
       cwd: workDir,
-      env: process.env,
+      env: buildPtyEnv(), // 剥离 NO_COLOR 并声明色彩能力，防止宿主环境导致黑白输出
       useConpty: true,
       conptyInheritCursor: false
     });
@@ -53,7 +69,7 @@ class SessionManager {
 
   handlePtyData(data) {
     // Ensure data is properly encoded as UTF-8 string
-    const dataStr = typeof data === 'string' ? data : data.toString('utf8');
+    const dataStr = typeof data === 'string' ? data : utf8Decoder.decode(data, { stream: true });
 
     // 自动处理工作区信任对话框
     if (!this.trustDialogHandled) {
@@ -67,11 +83,6 @@ class SessionManager {
         .replace(/\x1B[()][AB0]/g, '')            // 字符集选择
         .replace(/[\x00-\x08\x0B-\x1F\x7F]/g, '') // 控制字符（保留 \t \n）
         .replace(/\s+/g, ' ');                    // 多个空白压缩成单个空格
-
-      // 调试：每次接收数据都检查一次
-      if (cleanText.length > 50) {
-        console.log('[PTY] 清理后片段:', cleanText.substring(0, 200));
-      }
 
       if (cleanText.includes('Yes, I trust this folder') || cleanText.includes('trust this folder')) {
         console.log('[PTY] ✓ 检测到信任对话框，自动确认...');
@@ -124,6 +135,13 @@ class SessionManager {
     this.broadcast({ type: 'restart', clearScreen: true });
   }
 
+  stop() {
+    if (this.pty) {
+      this.pty.kill();
+      this.pty = null;
+    }
+  }
+
   addClient(ws) {
     this.clients.add(ws);
 
@@ -135,7 +153,10 @@ class SessionManager {
     this.sendToClient(ws, {
       type: 'history',
       data: history,
-      clientCount: this.clients.size
+      clientCount: this.clients.size,
+      authEnabled: auth.enabled,
+      tunnel: { enabled: process.env.ENABLE_TUNNEL === 'true', url: tunnelUrl },
+      server: { version: VERSION }
     });
 
     this.broadcast({ type: 'client_count', count: this.clients.size });
@@ -163,49 +184,60 @@ class SessionManager {
   }
 }
 
-const server = http.createServer((req, res) => {
-  // 允许跨域访问和隧道访问
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') {
-    res.writeHead(200);
-    res.end();
-    return;
-  }
-
-  const filePath = req.url === '/' ? 'public/index.html' : `public${req.url}`;
-  const fullPath = path.join(__dirname, filePath);
-
-  fs.readFile(fullPath, (err, data) => {
-    if (err) {
-      res.writeHead(404);
-      res.end('Not found');
-      return;
-    }
-    const ext = path.extname(filePath);
-    const contentType = ext === '.html' ? 'text/html' : ext === '.css' ? 'text/css' : 'text/plain';
-    res.writeHead(200, { 'Content-Type': contentType });
-    res.end(data);
-  });
-});
-
 const sessionManager = new SessionManager();
-const wss = new WebSocket.Server({ server });
 
 // 启动 Claude session 检测器
 const sessionDetector = new ClaudeSessionDetector((data) => {
-  wss.clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
-    }
-  });
+  sessionManager.broadcast(data);
 });
 sessionDetector.start();
 
-wss.on('connection', (ws) => {
+// ---- HTTP（静态 + API，路径穿越防护与令牌认证见 lib/http-handler.js）----
+const httpHandler = createHttpHandler({
+  publicDir: path.join(__dirname, 'public'),
+  auth,
+  version: VERSION,
+  getStatus: () => ({
+    pid: process.pid,
+    uptime: Math.round(process.uptime()),
+    clientCount: sessionManager.clients.size,
+    ptyRunning: Boolean(sessionManager.pty),
+    claudeStatus: sessionDetector.getLastState() || { active: false },
+    tunnel: { enabled: process.env.ENABLE_TUNNEL === 'true', url: tunnelUrl }
+  })
+});
+const server = http.createServer(httpHandler);
+
+// 必须在 WebSocketServer 之前注册：端口占用时优雅退出，避免丑的堆栈崩溃
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error('');
+    console.error(`[Server] ✗ 端口 ${PORT} 已被占用 — 说明服务器可能已经在运行了。`);
+    console.error(`[Server] 直接打开 http://localhost:${PORT}/ 即可使用，无需再次启动。`);
+    if (auth.enabled) {
+      console.error(`[Server] 令牌不变（指纹 ${tokenFingerprint(auth.token)}）——浏览器打开后按 🔑 输入`);
+    }
+    console.error('');
+    process.exit(1);
+  }
+  throw err;
+});
+
+// ---- WebSocket（令牌鉴权 + 心跳）----
+const wss = new WebSocket.Server({ server });
+
+wss.on('connection', (ws, req) => {
+  // 令牌校验：Authorization: Bearer（客户端首选，不会进 URL 日志）或 ?token=（浏览器）
+  if (!isAuthorized(req, auth)) {
+    console.log('[WebSocket] 拒绝未认证连接');
+    ws.close(4401, 'unauthorized');
+    return;
+  }
+
   console.log('[WebSocket] Client connected');
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
   sessionManager.addClient(ws);
 
   ws.on('message', (msg) => {
@@ -237,35 +269,110 @@ wss.on('connection', (ws) => {
   });
 });
 
-console.log(`[Server] WebSocket listening on ws://0.0.0.0:${PORT}`);
-console.log(`[Server] HTTP server on http://localhost:${PORT}`);
-console.log(`[Server] Claude command: ${CLAUDE_CMD}`);
+// 心跳：定期 ping，超时未 pong 的连接视为死连接并终止
+const heartbeatTimer = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      return;
+    }
+    ws.isAlive = false;
+    try {
+      ws.ping();
+    } catch (e) {
+      // 发送失败说明连接已断开
+    }
+  });
+}, HEARTBEAT_INTERVAL);
+heartbeatTimer.unref?.();
 
-let tunnelUrl = null;
-let shuttingDown = false;
+// ---- 隧道（ngrok）----
+function broadcastTunnel() {
+  sessionManager.broadcast({
+    type: 'tunnel',
+    enabled: process.env.ENABLE_TUNNEL === 'true',
+    url: tunnelUrl
+  });
+}
+
+/**
+ * 清理残留的 ngrok 进程：上一次服务器进程被强杀时，ngrok agent 可能成为孤儿进程，
+ * 占用账户的隧道会话导致新连接报 "invalid tunnel configuration"。
+ */
+async function cleanupOrphanNgrok() {
+  try {
+    await ngrok.kill();
+    await new Promise(resolve => setTimeout(resolve, 500));
+  } catch (e) {
+    // 忽略
+  }
+  try {
+    const { execFile } = require('child_process');
+    await new Promise((resolve) => {
+      execFile('taskkill', ['/F', '/IM', 'ngrok.exe'], { windowsHide: true }, () => resolve());
+    });
+    // 给 ngrok 云端会话释放留出时间
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  } catch (e) {
+    // 非 Windows 或 taskkill 不可用时忽略
+  }
+}
+
+/** 尝试在指定区域建立隧道；成功返回 URL，失败抛错。 */
+async function tryConnectRegion(region, attempt) {
+  console.log(`[Tunnel] 尝试 ${region} 区域 (第 ${attempt} 次)...`);
+
+  const config = {
+    authtoken: process.env.NGROK_AUTHTOKEN,
+    addr: PORT,
+    region: region,
+    onStatusChange: status => console.log('[Tunnel] Status:', status),
+    onLogEvent: data => {
+      if (data.lvl === 'eror' || data.lvl === 'warn') {
+        console.log('[Tunnel] Log:', data.msg);
+      }
+    }
+  };
+
+  const url = await ngrok.connect(config);
+  console.log(`[Tunnel] ✓ 成功连接到 ${region} 区域`);
+  return url;
+}
+
+/** 打印隧道成功信息并广播给所有客户端。 */
+function announceTunnelSuccess() {
+  console.log('');
+  console.log('='.repeat(60));
+  console.log('[Tunnel] ✓ Ngrok 内网穿透已启动！');
+  console.log('[Tunnel] 公网访问地址: ' + tunnelUrl);
+  console.log('[Tunnel] WebSocket地址: ' + tunnelUrl.replace('http://', 'ws://').replace('https://', 'wss://'));
+  if (auth.enabled) {
+    // 不打印带令牌的地址：URL 会进 ngrok 检查器、shell 历史和 server.log（start.bat 重定向）
+    console.log(`[Tunnel] 令牌指纹 ${tokenFingerprint(auth.token)} —— 浏览器打开上面的地址后按 🔑 输入令牌`);
+  }
+  console.log('[Tunnel] 手机端填写（公网必须 https，明文会被客户端拒绝）: ' + tunnelUrl);
+  console.log('='.repeat(60));
+  console.log('');
+
+  broadcastTunnel();
+}
 
 async function openTunnel(retryCount = 0) {
   if (shuttingDown || tunnelUrl) return;
 
   const MAX_RETRIES = 3;
   const RETRY_DELAY = 2000;
+  // ngrok v5 代理启动初期有瞬态故障（前 1-2 次 connect 报 "invalid tunnel configuration"，
+  // 与区域无关），因此每个区域先快速重试 2 次，再切换下一个区域。
+  const ATTEMPTS_PER_REGION = 2;
 
   try {
     console.log('[Tunnel] Initializing ngrok...');
+    await cleanupOrphanNgrok();
 
-    // 先断开所有现有连接
-    try {
-      await ngrok.kill();
-      await new Promise(resolve => setTimeout(resolve, 500));
-    } catch (e) {
-      // 忽略
-    }
-
-    // 验证 authtoken
     if (!process.env.NGROK_AUTHTOKEN) {
       throw new Error('NGROK_AUTHTOKEN 未设置');
     }
-
     console.log('[Tunnel] 使用 authtoken:', process.env.NGROK_AUTHTOKEN.substring(0, 10) + '...');
 
     // 尝试多个 region，从最近的开始
@@ -274,62 +381,36 @@ async function openTunnel(retryCount = 0) {
     const sortedRegions = [primaryRegion, ...regions.filter(r => r !== primaryRegion)];
 
     let lastError = null;
-
     for (const region of sortedRegions) {
-      try {
-        console.log(`[Tunnel] 尝试 ${region} 区域...`);
-
-        const config = {
-          authtoken: process.env.NGROK_AUTHTOKEN,
-          addr: PORT,
-          region: region,
-          onStatusChange: status => console.log('[Tunnel] Status:', status),
-          onLogEvent: data => {
-            if (data.lvl === 'eror' || data.lvl === 'warn') {
-              console.log('[Tunnel] Log:', data.msg);
-            }
-          }
-        };
-
-        tunnelUrl = await ngrok.connect(config);
-
-        // 成功了就跳出
-        console.log(`[Tunnel] ✓ 成功连接到 ${region} 区域`);
-        break;
-
-      } catch (err) {
-        lastError = err;
-        console.log(`[Tunnel] ${region} 区域失败:`, err.message);
-
-        // 清理后再试下一个
+      for (let attempt = 1; attempt <= ATTEMPTS_PER_REGION; attempt++) {
         try {
-          await ngrok.disconnect();
-          await new Promise(resolve => setTimeout(resolve, 300));
-        } catch (e) {}
+          tunnelUrl = await tryConnectRegion(region, attempt);
+          break;
+        } catch (err) {
+          lastError = err;
+          console.log(`[Tunnel] ${region} 区域失败:`, err.message);
 
-        // 继续尝试下一个区域
-        continue;
+          // 同区域重试前留足时间让云端会话就绪
+          try {
+            await ngrok.disconnect();
+            await new Promise(resolve => setTimeout(resolve, attempt < ATTEMPTS_PER_REGION ? 1500 : 1200));
+          } catch (e) {}
+        }
       }
+      if (tunnelUrl) break;
     }
 
-    // 所有区域都失败了
     if (!tunnelUrl) {
       throw lastError || new Error('所有区域都连接失败');
     }
 
-    console.log('');
-    console.log('='.repeat(60));
-    console.log('[Tunnel] ✓ Ngrok 内网穿透已启动！');
-    console.log('[Tunnel] 公网访问地址: ' + tunnelUrl);
-    console.log('[Tunnel] WebSocket地址: ' + tunnelUrl.replace('http://', 'ws://').replace('https://', 'wss://'));
-    console.log('='.repeat(60));
-    console.log('');
+    announceTunnelSuccess();
 
   } catch (err) {
     console.error('[Tunnel] Failed to start ngrok:', err.message);
-    console.error('[Tunnel] 完整错误:', err);
 
     tunnelUrl = null;
+    broadcastTunnel();
 
     // 自动重试
     if (retryCount < MAX_RETRIES &&
@@ -350,6 +431,16 @@ async function openTunnel(retryCount = 0) {
   }
 }
 
+console.log(`[Server] WebSocket listening on ws://0.0.0.0:${PORT}`);
+console.log(`[Server] HTTP server on http://localhost:${PORT}`);
+console.log(`[Server] Claude command: ${CLAUDE_CMD}`);
+if (auth.enabled) {
+  console.log(`[Auth] 访问令牌指纹: ${tokenFingerprint(auth.token)}（在 .env 的 ACCESS_TOKEN 里，日志不打印明文）`);
+  console.log(`[Auth] 本地访问: http://localhost:${PORT}/ —— 浏览器会弹 🔑 令牌输入框`);
+} else {
+  console.warn('[Auth] ⚠ 令牌认证已禁用（未设置 ACCESS_TOKEN）— 任何拿到地址的人都能控制终端');
+}
+
 server.listen(PORT, () => {
   console.log(`[Server] Server started on port ${PORT}`);
 
@@ -357,12 +448,15 @@ server.listen(PORT, () => {
     openTunnel();
   } else {
     console.log('[Tunnel] Tunnel disabled (set ENABLE_TUNNEL=true to enable)');
+    broadcastTunnel();
   }
 });
 
 async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
+
+  clearInterval(heartbeatTimer);
 
   if (tunnelUrl) {
     try {
@@ -375,6 +469,8 @@ async function shutdown() {
   }
 
   sessionDetector.stop();
+  sessionManager.stop();
+  wss.close();
   server.close(() => process.exit(0));
 }
 

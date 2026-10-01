@@ -1,66 +1,73 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Material Design 3 深色主题 - 渐变配色 -->
-    <color name="background_start">#0A0E14</color>
-    <color name="background_end">#1A1F2E</color>
-    <color name="surface">#1E2636</color>
-    <color name="surface_elevated">#2A3142</color>
-    <color name="surface_card">#242938</color>
+    <!--
+      dark-saas 配色（规范：skills/dark-saas + references/dark-saas-tokens.md）。
+      画布 #010102（近黑，不用纯黑）/ surface-1 #0F1011 / surface-2 #141516 /
+      hairline #23252A / ink #F7F8F8 / ink-muted #D0D6E0 / ink-subtle #8A8F98 / ink-tertiary #62666D /
+      唯一强调色 primary #5E6AD2（hover #828FFF、focus #5E69D1、其上文字 #FFFFFF）/
+      语义色 success #27A644、danger #E5484D、brand-secure #7A7FAD。
+      色名沿用旧皮肤只换值，避免牵动布局与代码里的引用；全站只有一个强调色。
+    -->
 
-    <!-- 主色 - 渐变蓝紫 -->
-    <color name="primary">#6366F1</color>
-    <color name="primary_variant">#8B5CF6</color>
-    <color name="primary_light">#A78BFA</color>
-    <color name="primary_dark">#4C1D95</color>
+    <!-- 画布：近黑，非纯黑 -->
+    <color name="canvas_alt">#010102</color>
+    <color name="background_start">#010102</color>
+    <color name="background_end">#010102</color>
+    <!-- 表面：层级靠表面色，不靠阴影 -->
+    <color name="surface">#0F1011</color>
+    <color name="surface_elevated">#141516</color>
+    <color name="surface_card">#141516</color>
 
-    <!-- 强调色 - 青色 -->
-    <color name="accent">#06B6D4</color>
-    <color name="accent_light">#22D3EE</color>
+    <!-- 唯一强调色：只用于可点击/可交互元素 -->
+    <color name="primary">#5E6AD2</color>
+    <color name="primary_variant">#828FFF</color>
+    <color name="primary_light">#828FFF</color>
+    <color name="primary_dark">#5E69D1</color>
+    <color name="on_primary">#FFFFFF</color>
 
-    <!-- 状态颜色 - 更鲜艳 -->
-    <color name="success">#10B981</color>
-    <color name="success_light">#34D399</color>
-    <color name="warning">#F59E0B</color>
-    <color name="warning_light">#FBBF24</color>
-    <color name="error">#F43F5E</color>
-    <color name="error_light">#FB7185</color>
-    <color name="info">#3B82F6</color>
+    <color name="accent">#5E6AD2</color>
+    <color name="accent_light">#828FFF</color>
 
-    <!-- 文本颜色 -->
-    <color name="text_primary">#F9FAFB</color>
-    <color name="text_secondary">#D1D5DB</color>
-    <color name="text_tertiary">#9CA3AF</color>
-    <color name="text_disabled">#6B7280</color>
-    <color name="text_hint">#4B5563</color>
+    <!-- 语义色：徽章/状态用 8% 透明底 + 语义色文字，不做实心色块 -->
+    <color name="success">#27A644</color>
+    <color name="success_light">#27A644</color>
+    <color name="warning">#7A7FAD</color>
+    <color name="warning_light">#7A7FAD</color>
+    <color name="error">#E5484D</color>
+    <color name="error_light">#E5484D</color>
+    <color name="info">#5E6AD2</color>
 
-    <!-- 边框和分隔线 -->
-    <color name="border">#374151</color>
-    <color name="border_light">#4B5563</color>
-    <color name="divider">#1F2937</color>
+    <!-- 文字：ink → ink-muted → ink-subtle → ink-tertiary -->
+    <color name="text_primary">#F7F8F8</color>
+    <color name="text_secondary">#D0D6E0</color>
+    <color name="text_tertiary">#8A8F98</color>
+    <color name="text_disabled">#62666D</color>
+    <color name="text_hint">#62666D</color>
 
-    <!-- 半透明颜色 -->
-    <color name="overlay_light">#1AFFFFFF</color>
-    <color name="overlay_dark">#40000000</color>
-    <color name="glass_bg">#20FFFFFF</color>
+    <!-- 分隔线：全部 1px hairline，不用重边框 -->
+    <color name="border">#23252A</color>
+    <color name="border_light">#34343A</color>
+    <color name="divider">#23252A</color>
 
-    <!-- 终端颜色 -->
-    <color name="terminal_bg">#0F131C</color>
-    <color name="terminal_text">#E5E7EB</color>
-    <color name="terminal_cursor">#06B6D4</color>
+    <!-- 深色面上的按压反馈（浅色遮罩）与抽屉遮罩 -->
+    <color name="overlay_light">#1FFFFFFF</color>
+    <color name="overlay_dark">#66000000</color>
+    <color name="glass_bg">#141516</color>
 
-    <!-- 按钮颜色 -->
-    <color name="button_primary">#6366F1</color>
-    <color name="button_secondary">#374151</color>
-    <color name="button_success">#10B981</color>
-    <color name="button_danger">#EF4444</color>
+    <!-- 终端：画布最底层，颜色只来自 ANSI 序列，不做额外染色 -->
+    <color name="terminal_bg">#010102</color>
+    <color name="terminal_text">#F7F8F8</color>
+    <color name="terminal_cursor">#5E6AD2</color>
 
-    <!-- 空状态颜色 -->
-    <color name="empty_state_icon">#4B5563</color>
-    <color name="empty_state_text">#6B7280</color>
+    <color name="button_primary">#5E6AD2</color>
+    <color name="button_secondary">#141516</color>
+    <color name="button_success">#27A644</color>
+    <color name="button_danger">#E5484D</color>
 
-    <!-- 卡片边框 -->
-    <color name="card_stroke">#374151</color>
+    <color name="empty_state_icon">#62666D</color>
+    <color name="empty_state_text">#8A8F98</color>
 
-    <!-- 状态颜色扩展 -->
-    <color name="status_pending">#F59E0B</color>
+    <color name="card_stroke">#23252A</color>
+
+    <color name="status_pending">#8A8F98</color>
 </resources>
