@@ -297,6 +297,26 @@
       margin-top: 2px;
       font-family: "JetBrains Mono", Consolas, monospace;
     }
+    .session-card.current { border-left-color: var(--accent); background: rgba(88, 166, 255, 0.06); }
+    .session-card .s-badge {
+      margin-left: 6px;
+      padding: 0 6px;
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--bg);
+      background: var(--accent);
+      vertical-align: 1px;
+    }
+    .session-switch {
+      margin-top: 6px;
+      width: 100%;
+      min-height: 0;
+      padding: 3px 8px;
+      font-size: 11.5px;
+    }
+    .session-actions { display: flex; gap: 6px; margin-top: 8px; }
+    .session-actions .btn { flex: 1; min-height: 0; padding: 3px 8px; font-size: 11.5px; }
 
     .task-card {
       background: var(--bg);
@@ -1281,6 +1301,7 @@
             }
             if (msg.clientCount != null) clientCount.textContent = `${msg.clientCount} 客户端`;
             if (msg.tunnel) updateTunnel(msg.tunnel);
+            if (msg.currentSession) setCurrentSession(msg.currentSession);
             if (msg.authEnabled === false) {
               authEnabled = false;
               $('token-btn').style.display = 'none';
@@ -1292,7 +1313,12 @@
           } else if (msg.type === 'restart') {
             if (msg.clearScreen) term.clear();
             taskBoard.finish();
-            term.write('\r\n[PTY 已重启]\r\n');
+            if (msg.target) {
+              setCurrentSession(msg.target);
+              term.write(`\r\n[已接到 ${shortSessionName(msg.target)}]\r\n`);
+            } else {
+              term.write('\r\n[PTY 已重启]\r\n');
+            }
           } else if (msg.type === 'pty_exited') {
             taskBoard.finish();
             term.write(`\r\n[PTY 已退出，退出码 ${msg.exitCode}]\r\n`);
@@ -1477,6 +1503,27 @@
       return s.status === 'busy' ? '运行中' : '空闲';
     }
 
+    /** 「最后活动 3 小时前」这种相对时间；时间戳不可用时返回空串。 */
+    function relTime(iso) {
+      const ms = Date.now() - Date.parse(iso || 0);
+      if (!isFinite(ms) || ms < 0) return '';
+      if (ms < 60000) return '刚刚';
+      if (ms < 3600000) return `${Math.floor(ms / 60000)} 分钟前`;
+      if (ms < 86400000) return `${Math.floor(ms / 3600000)} 小时前`;
+      return `${Math.floor(ms / 86400000)} 天前`;
+    }
+
+    /** 当前 PTY 接的是哪个会话（来自 history / restart 消息里的 currentSession）。 */
+    function setCurrentSession(target) {
+      window.currentSession = target || null;
+      if (window.lastClaudeStatus) updateClaudeStatus(window.lastClaudeStatus);
+    }
+
+    function shortSessionName(target) {
+      if (!target || !target.sessionId) return '新会话（默认目录）';
+      return `${String(target.sessionId).slice(0, 8)} @ ${target.cwd || '-'}${target.fork ? '（fork）' : ''}`;
+    }
+
     function updateClaudeStatus(msg) {
       window.lastClaudeStatus = msg;
       const container = $('claude-status');
@@ -1492,8 +1539,14 @@
         span.textContent = '未检测到活动会话';
         header.append(icon, span);
         container.appendChild(header);
+        if (window.currentSession) {
+          const body = document.createElement('div');
+          body.className = 'claude-status-body';
+          body.appendChild(statusRow('当前接的', shortSessionName(window.currentSession)));
+          container.appendChild(body);
+        }
         container.onclick = null;
-        renderSessionList([]);
+        renderSessionList([], msg);
         return;
       }
 
@@ -1510,16 +1563,34 @@
 
       const body = document.createElement('div');
       body.className = 'claude-status-body';
-      body.appendChild(statusRow('状态', statusLabel(msg)));
-      body.appendChild(statusRow('PID', String(msg.pid)));
+      if (msg.pid) {
+        body.appendChild(statusRow('状态', statusLabel(msg)));
+        body.appendChild(statusRow('PID', String(msg.pid)));
+      } else {
+        // 只有 transcript 信息（进程早退出了）：说清楚，别显示成 PID null
+        body.appendChild(statusRow('状态', '未在运行'));
+        body.appendChild(statusRow('最后活动', relTime(msg.updatedAt) || '-'));
+      }
       body.appendChild(statusRow('工作目录', msg.cwd || '-'));
+      if (window.currentSession) {
+        body.appendChild(statusRow('当前接的', shortSessionName(window.currentSession)));
+      }
       if (Array.isArray(msg.sessions) && msg.sessions.length > 1) {
         body.appendChild(statusRow('会话数', String(msg.sessions.length)));
       }
       container.appendChild(body);
 
+      const actions = document.createElement('div');
+      actions.className = 'session-actions';
+      const newBtn = document.createElement('button');
+      newBtn.className = 'btn';
+      newBtn.textContent = '新建会话';
+      newBtn.onclick = (e) => { e.stopPropagation(); requestNewSession(); };
+      actions.appendChild(newBtn);
+      container.appendChild(actions);
+
       container.onclick = () => openSessionPanel(primarySessionPayload(msg));
-      renderSessionList(msg.sessions || []);
+      renderSessionList(msg.sessions || [], msg);
     }
 
     function statusRow(label, value) {
@@ -1562,31 +1633,77 @@
       };
     }
 
-    function renderSessionList(sessions) {
+    function renderSessionList(sessions, msg) {
       const listEl = $('session-list');
       listEl.textContent = '';
       if (!Array.isArray(sessions) || sessions.length === 0) return;
+      const currentId = window.currentSession ? window.currentSession.sessionId : null;
 
       for (const s of sessions) {
+        const isCurrent = s.sessionId === currentId;
         const card = document.createElement('div');
-        card.className = 'session-card';
+        card.className = `session-card${isCurrent ? ' current' : ''}`;
         const name = document.createElement('div');
         name.className = 's-name';
         name.textContent = s.projectName || '未命名项目';
+        if (isCurrent) {
+          const badge = document.createElement('span');
+          badge.className = 's-badge';
+          badge.textContent = '当前';
+          name.appendChild(badge);
+        }
         const meta = document.createElement('div');
         meta.className = 's-meta';
         const left = document.createElement('span');
-        left.textContent = `${statusLabel(s)} · PID ${s.pid}`;
+        // 注册表来的条目有 pid；transcript 兜底的条目只能说最后活动时间
+        left.textContent = s.pid
+          ? `${statusLabel(s)} · PID ${s.pid}`
+          : `未在运行 · ${relTime(s.updatedAt) || '未知'}`;
         const right = document.createElement('span');
-        right.textContent = s.startedAt ? new Date(s.startedAt).toLocaleTimeString() : '';
+        right.textContent = s.startedAt ? new Date(s.startedAt).toLocaleTimeString() : (s.cwd || '');
         meta.append(left, right);
         card.append(name, meta);
+
+        const switchBtn = document.createElement('button');
+        switchBtn.className = 'btn session-switch';
+        switchBtn.textContent = isCurrent ? '已接上' : '切到这个会话';
+        switchBtn.disabled = isCurrent;
+        switchBtn.onclick = (e) => { e.stopPropagation(); switchToSession(s); };
+        card.appendChild(switchBtn);
+
         card.onclick = () => {
-          const msg = window.lastClaudeStatus;
-          if (msg && msg.active) openSessionPanel(sessionPayload(s, msg));
+          const status = window.lastClaudeStatus;
+          if (status && status.active) openSessionPanel(sessionPayload(s, status));
         };
         listEl.appendChild(card);
       }
+    }
+
+    /* ── 切换会话 ── */
+    const SWITCH_CONFIRM_KEY = 'claudelink.switchConfirmed';
+
+    function sendSwitch(sessionId) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'switch', sessionId }));
+      } else {
+        showToast('未连接到服务器', 'error');
+      }
+    }
+
+    function switchToSession(s) {
+      // 目标进程还活着 → 会在 fork 出来的新分支里续上，先确认一次，之后不再问
+      if (s.live && localStorage.getItem(SWITCH_CONFIRM_KEY) !== '1') {
+        const ok = confirm(`「${s.projectName || s.sessionId}」正在别处运行。\n\n切换会 fork 出一个新会话续上它，原来那个进程不受影响。\n\n继续吗？`);
+        if (!ok) return;
+        localStorage.setItem(SWITCH_CONFIRM_KEY, '1');
+      }
+      sendSwitch(s.sessionId);
+      showToast('正在切换会话…');
+    }
+
+    function requestNewSession() {
+      sendSwitch(null);
+      showToast('正在开新会话…');
     }
 
     /* ── 看板折叠 / 移动端抽屉 ── */

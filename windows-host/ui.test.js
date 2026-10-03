@@ -1,7 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
 const http = require('http');
-const { spawn } = require('child_process');
+const os = require('os');
+const path = require('path');
+const { spawn, spawnSync } = require('child_process');
 
 // 使用独立端口避免与用户运行的实例冲突；关闭隧道避免测试期间启动 ngrok
 const PORT = 3101;
@@ -43,7 +46,11 @@ test.before(async () => {
       ...process.env,
       PORT: String(PORT),
       ENABLE_TUNNEL: 'false',
-      ACCESS_TOKEN: TOKEN
+      ACCESS_TOKEN: TOKEN,
+      // 测试服务器别去写用户真身的会话记忆文件
+      SESSION_TARGET_FILE: path.join(os.tmpdir(), 'claudelink-uitest-target.json'),
+      // 启动即接上次会话是 server.js 的正常行为；测试里换掉命令，别真去 --resume 用户的会话
+      CLAUDE_CMD: process.platform === 'win32' ? 'C:\\Windows\\System32\\cmd.exe' : '/bin/sh'
     },
     stdio: 'ignore',
     windowsHide: true
@@ -62,6 +69,23 @@ test('HTTP server serves index.html', async () => {
   assert.ok(res.body.includes('ClaudeLink Terminal'), 'Should contain page title');
   assert.ok(res.body.includes('terminal-container'), 'Should contain terminal element');
   assert.ok(res.body.includes('connect-btn'), 'Should contain connect button');
+});
+
+test('index.html 内联脚本语法没坏', async () => {
+  const res = await get('/');
+  const blocks = [...res.body.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+  assert.ok(blocks.length > 0, '一个内联脚本都没找到，选择器写错了？');
+  // 内联脚本是 type="module"（有 import），存成 .mjs 交给 node --check；语法错会退出码非 0
+  const file = path.join(os.tmpdir(), `claudelink-inline-${process.pid}.mjs`);
+  try {
+    for (const code of blocks) {
+      fs.writeFileSync(file, code, 'utf8');
+      const check = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
+      assert.strictEqual(check.status, 0, `内联脚本语法错：\n${check.stderr || check.stdout}`);
+    }
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
 });
 
 test('index.html ships Esc, Tab, arrow and Ctrl key buttons', async () => {

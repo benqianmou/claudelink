@@ -8,6 +8,7 @@ const ClaudeSessionDetector = require('./session-detector');
 const { createAuth, isAuthorized, tokenFingerprint } = require('./lib/auth');
 const { createHttpHandler } = require('./lib/http-handler');
 const { buildPtyEnv } = require('./lib/pty-env');
+const { pickTarget, resolveSwitch, readTarget, writeTarget } = require('./lib/session-target');
 
 const PORT = process.env.PORT || 3000;
 const CLAUDE_CMD = process.env.CLAUDE_CMD || 'C:\\Users\\Lenovo\\.local\\bin\\claude.exe';
@@ -33,25 +34,49 @@ class SessionManager {
     this.clients = new Set();
     this.trustDialogBuffer = '';
     this.trustDialogHandled = false;
+    // 当前 PTY 接的是哪个会话：{ cwd, sessionId, fork }，sessionId=null 表示新会话
+    this.target = { cwd: null, sessionId: null, fork: false };
   }
 
-  start() {
-    if (this.pty) return;
+  /**
+   * 起 PTY。target = { cwd, sessionId, fork }：cwd 决定 claude 认哪个 project（没有 --cwd 参数，
+   * 只能在启动目录上做文章）；sessionId 有值就 --resume，null = 新会话；
+   * fork=true 时加 --fork-session，免得和还活着的那个进程抢同一份 transcript。
+   * 不传就用当前 target（重启场景）。
+   * @returns {boolean} 是否真把 PTY 起起来了（目录不存在等会是 false）
+   */
+  start(target = this.target) {
+    if (this.pty) return false;
 
     utf8Decoder.decode();   // 新 PTY：冲掉上一轮可能残留的半截多字节字符
 
-    const workDir = process.env.USERPROFILE || process.env.HOME;
+    const wanted = target || {};
+    const workDir = wanted.cwd || process.env.USERPROFILE || process.env.HOME;
+    const args = wanted.sessionId
+      ? ['--resume', wanted.sessionId].concat(wanted.fork ? ['--fork-session'] : [])
+      : [];
 
-    const proc = pty.spawn(CLAUDE_CMD, [], {
-      name: 'xterm-256color',
-      cols: 100,
-      rows: 30,
-      cwd: workDir,
-      env: buildPtyEnv(), // 剥离 NO_COLOR 并声明色彩能力，防止宿主环境导致黑白输出
-      useConpty: true,
-      conptyInheritCursor: false
-    });
+    let proc;
+    try {
+      proc = pty.spawn(CLAUDE_CMD, args, {
+        name: 'xterm-256color',
+        cols: 100,
+        rows: 30,
+        cwd: workDir,
+        env: buildPtyEnv(), // 剥离 NO_COLOR 并声明色彩能力，防止宿主环境导致黑白输出
+        useConpty: true,
+        conptyInheritCursor: false
+      });
+    } catch (err) {
+      // 目录被删或路径非法时别把连接流程带崩，报一次错就行
+      this.pty = null;
+      console.error(`[PTY] 启动失败 cwd=${workDir}: ${err.message}`);
+      this.broadcast({ type: 'error', message: `无法在 ${workDir} 启动 Claude：${err.message}` });
+      return false;
+    }
+
     this.pty = proc;
+    this.target = { cwd: workDir, sessionId: wanted.sessionId || null, fork: Boolean(wanted.fork) };
 
     proc.onData((data) => this.handlePtyData(data));
     proc.onExit(({ exitCode }) => {
@@ -64,7 +89,8 @@ class SessionManager {
       }
     });
 
-    console.log('[PTY] Claude process started');
+    console.log(`[PTY] Claude process started (${this.target.sessionId ? `resume ${this.target.sessionId}${this.target.fork ? ' --fork-session' : ''}` : 'new session'}) cwd=${this.target.cwd}`);
+    return true;
   }
 
   handlePtyData(data) {
@@ -120,8 +146,11 @@ class SessionManager {
     this.pty.write(command);
   }
 
-  restart() {
-    console.log('[Session] Restarting PTY...');
+  /**
+   * 换掉当前 PTY（重启与切会话共用），新进程按 target 起。
+   * @returns {boolean} 同 start()：起不来就 false，调用方别谎报成功
+   */
+  swapPty(target) {
     if (this.pty) {
       this.pty.kill();
       this.pty = null;
@@ -131,8 +160,21 @@ class SessionManager {
     this.trustDialogBuffer = '';
     this.trustDialogHandled = false;
 
-    this.start();
-    this.broadcast({ type: 'restart', clearScreen: true });
+    return this.start(target);
+  }
+
+  restart() {
+    console.log('[Session] Restarting PTY...');
+    if (!this.swapPty(this.target)) return; // 起不来时 start() 已经报过错，别再说「已重启」
+    this.broadcast({ type: 'restart', clearScreen: true, target: this.target });
+  }
+
+  /** 切到另一个会话：老 PTY 杀掉重开（用户 2026-10-02 拍板，不做多 PTY 池）。 */
+  switchSession(target) {
+    console.log(`[Session] Switching to ${target.sessionId || 'new session'} @ ${target.cwd || '(default dir)'}${target.fork ? ' (fork)' : ''}`);
+    if (!this.swapPty(target)) return;
+    // 复用 restart 消息：客户端那边的「清屏 + 重新开始」逻辑本来就一样
+    this.broadcast({ type: 'restart', clearScreen: true, target: this.target });
   }
 
   stop() {
@@ -156,6 +198,7 @@ class SessionManager {
       clientCount: this.clients.size,
       authEnabled: auth.enabled,
       tunnel: { enabled: process.env.ENABLE_TUNNEL === 'true', url: tunnelUrl },
+      currentSession: this.target,
       server: { version: VERSION }
     });
 
@@ -192,6 +235,26 @@ const sessionDetector = new ClaudeSessionDetector((data) => {
 });
 sessionDetector.start();
 
+// 打开网页就该是上次那个会话，而不是家目录里的新会话（用户 2026-10-02 拍板：记忆 > 最近活跃 > 新建）。
+// 这里先选一次并立刻把 PTY 起起来，网页一打开就是它。
+(async () => {
+  try {
+    const state = await sessionDetector.detectSessions();
+    const target = pickTarget({ remembered: readTarget(), sessions: state.sessions || [] });
+    if (target && sessionManager.start(target)) {
+      writeTarget(target);
+      console.log(`[Session] 启动即接上 ${target.sessionId} @ ${target.cwd}${target.fork ? ' (fork)' : ''}`);
+    } else if (target) {
+      // transcript 还在但目录已经没了：别记进记忆，等客户端连上来开新会话
+      console.log(`[Session] 目录不可用，跳过自动接上：${target.cwd}`);
+    } else {
+      console.log('[Session] 没有可接的旧会话，等第一个客户端连上来再开新会话');
+    }
+  } catch (err) {
+    console.error('[Session] 选择启动会话失败:', err.message);
+  }
+})();
+
 // ---- HTTP（静态 + API，路径穿越防护与令牌认证见 lib/http-handler.js）----
 const httpHandler = createHttpHandler({
   publicDir: path.join(__dirname, 'public'),
@@ -202,6 +265,7 @@ const httpHandler = createHttpHandler({
     uptime: Math.round(process.uptime()),
     clientCount: sessionManager.clients.size,
     ptyRunning: Boolean(sessionManager.pty),
+    currentSession: sessionManager.target,
     claudeStatus: sessionDetector.getLastState() || { active: false },
     tunnel: { enabled: process.env.ENABLE_TUNNEL === 'true', url: tunnelUrl }
   })
@@ -240,13 +304,25 @@ wss.on('connection', (ws, req) => {
 
   sessionManager.addClient(ws);
 
-  ws.on('message', (msg) => {
+  ws.on('message', async (msg) => {
     const msgStr = msg.toString();
     try {
       const parsed = JSON.parse(msgStr);
 
       if (parsed.type === 'restart') {
         sessionManager.restart();
+      } else if (parsed.type === 'switch') {
+        // sessionId 只认 detector 列表里的会话，客户端传的 cwd 一律不采信
+        const state = sessionDetector.getLastState();
+        // 刚启动还没轮询到（列表为空）时现扫一次，别把「还没数据」说成「该会话不存在」
+        const known = state && (state.sessions || []).length ? state : await sessionDetector.detectSessions();
+        const target = resolveSwitch(parsed.sessionId, known);
+        if (!target) {
+          sessionManager.sendToClient(ws, { type: 'error', message: '该会话已不存在，请刷新列表' });
+        } else {
+          writeTarget(target);
+          sessionManager.switchSession(target);
+        }
       } else if (parsed.type === 'input') {
         sessionManager.handleInput(parsed.data, ws);
       } else if (parsed.type === 'resize') {

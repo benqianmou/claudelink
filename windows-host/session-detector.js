@@ -5,6 +5,12 @@ const { promisify } = require('util');
 const os = require('os');
 const execAsync = promisify(exec);
 
+// 会话注册表（~/.claude/sessions/*.json）在某些版本里是空的（本机 2026-10-02 实测为空），
+// 那时改用 transcript（~/.claude/projects/<slug>/<sessionId>.jsonl）反推「还有哪些会话、目录在哪」。
+const TRANSCRIPT_LIMIT = 10;              // 只列最近 10 个，够用，也不必每次 stat 全部 164 个文件
+const TRANSCRIPT_HEAD_BYTES = 64 * 1024;  // cwd 字段实测出现在 ~16KB 处，64KB 留足余量
+const TRANSCRIPT_CACHE_MS = 30000;        // detector 每 2.5s 轮询一次，扫描结果缓存 30s
+
 // 读取用户输入历史（可按 homeDir 注入，便于测试）
 async function getUserInputHistory(sessionId, limit = 20, homeDir = os.homedir()) {
   try {
@@ -122,6 +128,17 @@ async function getRecentCommands(limit = 10, homeDir = os.homedir()) {
   }
 }
 
+/** 从 transcript 头部文本里抽 cwd（同一行还带 sessionId / version / gitBranch）。 */
+function parseTranscriptCwd(head) {
+  const match = head.match(/"cwd":"((?:[^"\\]|\\.)*)"/);
+  if (!match) return null;
+  try {
+    return JSON.parse(`"${match[1]}"`);
+  } catch (e) {
+    return null;
+  }
+}
+
 /** 默认进程存活检测：tasklist，带 30s 缓存。 */
 function defaultIsProcessAlive() {
   const pidCache = new Map();
@@ -167,6 +184,7 @@ class ClaudeSessionDetector {
     this.sessionsDir = path.join(this.homeDir, '.claude', 'sessions');
     this.lastStateHash = null;
     this.lastState = { active: false, sessions: [] };
+    this.transcriptCache = null;
     this.pollTimer = null;
   }
 
@@ -228,27 +246,107 @@ class ClaudeSessionDetector {
     return sessions;
   }
 
-  /** 检测全部存活会话，按 updatedAt/startedAt 倒序；返回 claude_status 状态对象。 */
-  async detectSessions() {
-    const sessions = await this.readSessionFiles();
-    if (!sessions.length) {
-      this.lastState = { active: false, sessions: [] };
-      return this.lastState;
+  /** 扫描 ~/.claude/projects/<slug>/*.jsonl，按最后修改时间倒序取最近若干个。 */
+  async readTranscripts() {
+    const projectsDir = path.join(this.homeDir, '.claude', 'projects');
+    let slugs;
+    try {
+      slugs = await fs.readdir(projectsDir, { withFileTypes: true });
+    } catch (err) {
+      return [];
     }
 
-    const aliveResults = await Promise.all(
-      sessions.map(async (s) => ({ session: s, alive: await this.isProcessAlive(s.pid) }))
-    );
-    const validSessions = aliveResults
-      .filter(r => r.alive)
-      .map(r => r.session)
-      .sort((a, b) => {
-        const at = Date.parse(a.updatedAt || a.startedAt || 0);
-        const bt = Date.parse(b.updatedAt || b.startedAt || 0);
-        return bt - at;
-      });
+    const files = [];
+    for (const slug of slugs) {
+      if (!slug.isDirectory()) continue;
+      const dir = path.join(projectsDir, slug.name);
+      let names;
+      try {
+        names = await fs.readdir(dir);
+      } catch (err) {
+        continue;
+      }
+      for (const name of names) {
+        if (!name.endsWith('.jsonl')) continue;
+        const file = path.join(dir, name);
+        try {
+          const stat = await fs.stat(file);
+          files.push({ file, sessionId: name.slice(0, -'.jsonl'.length), mtime: stat.mtime });
+        } catch (err) {
+          // 文件刚被清理，跳过
+        }
+      }
+    }
 
-    if (!validSessions.length) {
+    files.sort((a, b) => b.mtime - a.mtime);
+
+    const sessions = [];
+    for (const item of files.slice(0, TRANSCRIPT_LIMIT)) {
+      const cwd = await this.readTranscriptCwd(item.file);
+      // 拿不到 cwd 就没法在正确目录里 --resume，这种条目直接丢掉
+      if (!cwd) continue;
+      sessions.push({
+        sessionId: item.sessionId,
+        pid: null,
+        cwd,
+        projectName: path.basename(cwd),
+        status: 'unknown',
+        startedAt: null,
+        updatedAt: item.mtime.toISOString(),
+        userInputs: [],
+        live: false,
+        source: 'transcript'
+      });
+    }
+    return sessions;
+  }
+
+  /** 只读 transcript 头部若干 KB（完整文件可能几 MB）。 */
+  async readTranscriptCwd(file) {
+    let handle;
+    try {
+      handle = await fs.open(file, 'r');
+      const buf = Buffer.alloc(TRANSCRIPT_HEAD_BYTES);
+      const { bytesRead } = await handle.read(buf, 0, TRANSCRIPT_HEAD_BYTES, 0);
+      return parseTranscriptCwd(buf.subarray(0, bytesRead).toString('utf8'));
+    } catch (err) {
+      return null;
+    } finally {
+      if (handle) await handle.close().catch(() => {});
+    }
+  }
+
+  /** transcript 扫描带缓存：轮询 2.5s 一次，每次 stat 完所有 transcript 太浪费。 */
+  async readTranscriptsCached() {
+    const now = Date.now();
+    if (this.transcriptCache && now - this.transcriptCache.at < TRANSCRIPT_CACHE_MS) {
+      return this.transcriptCache.list;
+    }
+    const list = await this.readTranscripts();
+    this.transcriptCache = { at: now, list };
+    return list;
+  }
+
+  /** 检测全部会话（注册表里的活进程 ∪ transcript 里的最近会话），按最后活动倒序。 */
+  async detectSessions() {
+    const registry = await this.readSessionFiles();
+    const aliveResults = await Promise.all(
+      registry.map(async (s) => ({ session: s, alive: await this.isProcessAlive(s.pid) }))
+    );
+    const liveSessions = aliveResults
+      .filter(r => r.alive)
+      .map(r => Object.assign({}, r.session, { live: true, source: 'registry' }));
+
+    // 注册表为空（本机实测为空）时靠 transcript 兜底；id 已在注册表里的以注册表为准
+    const seen = new Set(liveSessions.map(s => s.sessionId));
+    const transcripts = (await this.readTranscriptsCached()).filter(t => !seen.has(t.sessionId));
+    const merged = liveSessions.concat(transcripts).sort((a, b) => {
+      const at = Date.parse(a.updatedAt || a.startedAt || 0);
+      const bt = Date.parse(b.updatedAt || b.startedAt || 0);
+      return bt - at;
+    });
+
+    if (!merged.length) {
       this.lastState = { active: false, sessions: [] };
       return this.lastState;
     }
@@ -257,27 +355,30 @@ class ClaudeSessionDetector {
     const summary = await getSessionSummary(this.homeDir);
     const recentCommands = await getRecentCommands(10, this.homeDir);
 
-    const sessionInfos = validSessions.map(s => ({
+    const sessionInfos = merged.map(s => ({
       sessionId: s.sessionId,
-      pid: s.pid,
+      pid: s.pid || null,
       cwd: s.cwd,
       projectName: s.name || path.basename(s.cwd || ''),
       status: s.status || 'unknown',
-      startedAt: s.startedAt,
-      updatedAt: s.updatedAt,
-      userInputs: historyMap.get(s.sessionId) || []
+      startedAt: s.startedAt || null,
+      updatedAt: s.updatedAt || s.startedAt || null,
+      userInputs: historyMap.get(s.sessionId) || [],
+      live: Boolean(s.live),
+      source: s.source || 'registry'
     }));
 
-    const primary = validSessions[0];
+    const primary = merged[0];
     const state = {
       active: true,
       status: primary.status || 'unknown',
       cwd: primary.cwd,
-      pid: primary.pid,
+      pid: primary.pid || null,
+      live: Boolean(primary.live),
       projectName: primary.name || path.basename(primary.cwd || ''),
       sessionId: primary.sessionId,
-      startedAt: primary.startedAt,
-      updatedAt: primary.updatedAt,
+      startedAt: primary.startedAt || null,
+      updatedAt: primary.updatedAt || primary.startedAt || null,
       userInputs: sessionInfos[0].userInputs,
       summary,
       recentCommands,

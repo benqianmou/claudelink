@@ -230,3 +230,98 @@ test('getLastState initial state is inactive', () => {
   const detector = new ClaudeSessionDetector(() => {}, { homeDir: os.homedir() });
   assert.strictEqual(detector.getLastState().active, false);
 });
+
+// ---- transcript 兜底源：注册表为空时用 ~/.claude/projects/**/*.jsonl ----
+
+/** 造一个 transcript；cwd 故意放到 20KB 之后，验证只读头部窗口也够用。 */
+function writeTranscript(dir, slug, sessionId, cwd, mtime) {
+  const projDir = path.join(dir, '.claude', 'projects', slug);
+  fs.mkdirSync(projDir, { recursive: true });
+  const file = path.join(projDir, `${sessionId}.jsonl`);
+  fs.writeFileSync(file, [
+    JSON.stringify({ type: 'mode', mode: 'normal', sessionId, padding: 'x'.repeat(20 * 1024) }),
+    JSON.stringify({ cwd, sessionId, version: '2.1.283', gitBranch: 'main' })
+  ].join('\n') + '\n');
+  if (mtime) fs.utimesSync(file, mtime, mtime);
+  return file;
+}
+
+test('注册表为空时用 transcript 兜底，cwd 在第 20KB 之后也能抽到', async () => {
+  const dir = makeHome();
+  const id = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+  writeTranscript(dir, 'C--tmp-a', id, 'C:\\tmp\\a');
+
+  const state = await new ClaudeSessionDetector(() => {}, { homeDir: dir }).detectSessions();
+  assert.strictEqual(state.active, true);
+  assert.strictEqual(state.sessions.length, 1);
+  assert.strictEqual(state.sessions[0].sessionId, id);
+  assert.strictEqual(state.sessions[0].cwd, 'C:\\tmp\\a');
+  assert.strictEqual(state.sessions[0].projectName, 'a');
+  assert.strictEqual(state.sessions[0].pid, null);
+  assert.strictEqual(state.sessions[0].source, 'transcript');
+  assert.strictEqual(state.live, false);
+  assert.strictEqual(state.sessionId, id);
+});
+
+test('注册表与会话文件合并：同一会话只出现一次且注册表优先，按最后活动倒序', async () => {
+  const dir = makeHome();
+  const dup = 'dddddddd-1111-4111-8111-dddddddddddd';
+  const fresh = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+  const older = 'cccccccc-3333-4333-8333-cccccccccccc';
+
+  writeSession(dir, 'a.json', {
+    pid: 111, sessionId: dup, name: 'dup-proj', cwd: 'C:\\dup',
+    status: 'busy', startedAt: '2024-01-01T00:00:00Z', updatedAt: '2024-01-01T00:00:00Z'
+  });
+  writeTranscript(dir, 'C--dup', dup, 'C:\\dup');
+  writeTranscript(dir, 'E--tmp-b', fresh, 'E:\\tmp\\b', new Date());
+  writeTranscript(dir, 'E--tmp-c', older, 'E:\\tmp\\c', new Date(Date.now() - 3600_000));
+
+  const detector = new ClaudeSessionDetector(() => {}, {
+    homeDir: dir,
+    isProcessAlive: async (pid) => pid === 111
+  });
+  const state = await detector.detectSessions();
+
+  assert.strictEqual(state.sessions.length, 3);            // dup 没有出现两次
+  assert.strictEqual(state.sessions[0].sessionId, fresh);
+  assert.strictEqual(state.sessions[1].sessionId, older);
+  assert.strictEqual(state.sessions[2].sessionId, dup);
+  assert.strictEqual(state.sessions[2].pid, 111);
+  assert.strictEqual(state.sessions[2].live, true);
+  assert.strictEqual(state.sessions[2].source, 'registry');
+  assert.strictEqual(state.sessionId, fresh);
+});
+
+test('transcript 抽不到 cwd 就不列出来（没法在正确目录里 resume）', async () => {
+  const dir = makeHome();
+  const projDir = path.join(dir, '.claude', 'projects', 'C--tmp-x');
+  fs.mkdirSync(projDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(projDir, 'eeeeeeee-4444-4444-8444-eeeeeeeeeeee.jsonl'),
+    JSON.stringify({ type: 'mode', mode: 'normal' }) + '\n'
+  );
+
+  const state = await new ClaudeSessionDetector(() => {}, { homeDir: dir }).detectSessions();
+  assert.strictEqual(state.active, false);
+  assert.deepStrictEqual(state.sessions, []);
+});
+
+test('transcript 只列最近 10 个', async () => {
+  const dir = makeHome();
+  const projDir = path.join(dir, '.claude', 'projects', 'C--tmp-many');
+  fs.mkdirSync(projDir, { recursive: true });
+  const now = Date.now();
+  for (let i = 0; i < 12; i++) {
+    const id = `ffffffff-0000-4000-8000-0000000000${String(i).padStart(2, '0')}`;
+    const file = path.join(projDir, `${id}.jsonl`);
+    fs.writeFileSync(file, JSON.stringify({ cwd: `C:\\tmp\\m${i}`, sessionId: id }) + '\n');
+    const t = new Date(now - i * 60000);
+    fs.utimesSync(file, t, t);
+  }
+
+  const list = await new ClaudeSessionDetector(() => {}, { homeDir: dir }).readTranscripts();
+  assert.strictEqual(list.length, 10);
+  assert.strictEqual(list[0].cwd, 'C:\\tmp\\m0');
+  assert.strictEqual(list[9].cwd, 'C:\\tmp\\m9');
+});
