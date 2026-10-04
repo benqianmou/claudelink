@@ -79,7 +79,7 @@ node server.js
 
 #### 本机浏览器
 - 直接打开 http://localhost:3000 即可使用（默认免认证）
-- 若设置了 `ACCESS_TOKEN`，点击状态栏 🔑 按钮粘贴令牌（启动日志只打印令牌指纹，不打印明文）
+- 若设置了 `ACCESS_TOKEN`，用启动日志里的带令牌地址，或点击状态栏 🔑 按钮粘贴令牌
 
 #### 手机（公网/局域网）
 - 服务器启动后点状态栏公网地址，或扫描侧栏的**二维码**
@@ -159,26 +159,11 @@ windows-host/
 2. **`~/.claude/history.jsonl`** — 用户输入历史（带时间戳和 sessionId）
 3. **`~/.claude/session-data/*.tmp`** — 会话摘要（任务、修改的文件、使用的工具）
 4. **`~/.claude/bash-commands.log`** — 执行的 Bash 命令记录
-5. **`~/.claude/projects/<slug>/<sessionId>.jsonl`** — 会话 transcript。本机 `~/.claude/sessions/` 常为空（会话结束就被清掉），历史会话靠它兜底列出：只读文件头部 64 KB 取 `cwd` 字段，按修改时间倒序取最近 10 个、30 秒缓存。`projects/` 子目录名是把 cwd 里所有非 `[A-Za-z0-9]` 字符换成 `-` 得到的**有损**编码（`E:\git\qq-chat-exporter\docker` → `E--git-qq-chat-exporter-docker`），反解不出来，所以 cwd 一律从 transcript 内容里读
 
 ### 检测机制
 - `session-detector.js` 每 2.5 秒轮询上述文件
 - 通过 `stateHash` 去重，只在状态变化时广播
-- WebSocket 消息类型：`claude_status`（含全部存活会话）、`restart`（重启/切会话后带 `target`）、`error`
-- 会话条目带 `live`（进程还在不在）与 `source`（`registry` = 注册表活进程 / `transcript` = 历史文件）
-
-### 接上哪个会话（活跃会话切换）
-打开网页不该看到家目录里的新会话，而应该是你上次在用的那个。服务端启动时按三层优先级选一次：
-
-1. **记忆** — `~/.claudelink/session-target.json`（可用 `SESSION_TARGET_FILE` 覆盖，测试用）里记着上次选中的 `{cwd, sessionId}`；里面 `sessionId: null` 表示「上次明确选了新会话」，同样兑现
-2. **最近活跃** — 注册表里还活着的进程优先，其次是最新写入的 transcript
-3. **新建** — 一个都没有时，等第一个客户端连上来在家目录开新会话
-
-- 目标进程还在跑（`live`）时切换会加 `--fork-session`：新进程从这个会话接着聊，但写新的 session id，原进程不受影响
-- 目标目录已经不存在（transcript 还在）时不会假装接上：日志打 `[Session] 目录不可用，跳过自动接上`，也**不写进记忆**，等客户端连上来开新会话
-- 客户端发 `{type:'switch', sessionId}`（`null` = 新会话），服务端成功后广播 `{type:'restart', clearScreen:true, target}`；目标已不在列表里则回 `{type:'error'}`，且不改动当前目标。`history` 消息与 `/api/status` 都带 `currentSession`
-- 网页端：会话卡片高亮「当前」，卡片上是「切到这个会话」按钮（当前那个显示「已接上」），面板里有「新建会话」。目标进程还活着时第一次切换会 `confirm` 提醒一次
-- 切换 = 杀掉当前 PTY 重开（不做多 PTY 池）：**当前会话里正在跑的东西会中断**
+- WebSocket 消息类型：`claude_status`（含全部存活会话）
 
 ---
 
@@ -186,8 +171,7 @@ windows-host/
 
 ### 安全性
 - ⚠️ 默认免认证：未设置 `ACCESS_TOKEN` 时，任何拿到地址（尤其公网 ngrok 地址）的人都能完全控制终端
-- 多人或公网使用请务必设置 `ACCESS_TOKEN` 启用认证；令牌只保存在环境变量，不落盘，日志只打印 SHA-256 指纹
-- 手机端（Android）走 `Authorization: Bearer` 头，令牌不进 URL；**浏览器无法给 WebSocket 握手加自定义头**，所以网页端仍用 `?token=`，这条已知风险是：令牌会出现在 ngrok 请求检查器、浏览器历史与地址栏截图里 —— 网页端只在 https 下用，且本机访问时优先点 🔑 输入
+- 多人或公网使用请务必设置 `ACCESS_TOKEN` 启用认证；令牌只保存在环境变量，不落盘
 - ngrok 公网地址会出现在服务器日志与状态栏中，注意屏幕共享时避免泄露
 - HTTP 静态服务已做路径穿越防护，仅能访问 `public/` 目录
 
